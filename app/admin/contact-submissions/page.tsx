@@ -7,9 +7,7 @@ import {
   Mail,
   Search,
   Filter,
-  CheckCircle,
   Clock,
-  Archive,
   Trash2,
   Eye,
   EyeOff,
@@ -19,17 +17,15 @@ import {
   ArrowLeft,
   User,
   Calendar,
-  Tag,
   FileText,
   Send,
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  X,
   Plus
 } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, getDocs, doc, updateDoc, deleteDoc, where, Timestamp, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, doc, updateDoc, deleteDoc, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '@/lib/useAuth';
 import { formatDistanceToNow } from 'date-fns';
 

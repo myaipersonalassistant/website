@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -13,18 +13,13 @@ import {
   Zap,
   Shield,
   Clock,
-  ArrowRight,
   Star,
   MessageSquare,
-  Phone,
-  Mail,
   Calendar,
-  Target,
-  TrendingUp
 } from 'lucide-react';
 
 
-const PricingPage = () => {
+const PricingPageContent = () => {
   const searchParams = useSearchParams();
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
@@ -384,6 +379,21 @@ const PricingPage = () => {
         </div>
       </section>
     </div>
+  );
+};
+
+const PricingPage = () => {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4"></div>
+          <p className="text-slate-600">Loading pricing...</p>
+        </div>
+      </div>
+    }>
+      <PricingPageContent />
+    </Suspense>
   );
 };
 

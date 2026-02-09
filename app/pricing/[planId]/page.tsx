@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
-  ArrowLeft,
   Check,
   X,
   Star,
@@ -16,16 +15,13 @@ import {
   TrendingUp,
   Calendar,
   Mail,
-  Phone,
   Sparkles,
   Crown,
   GraduationCap,
   Briefcase,
   Target,
   BarChart3,
-  MessageSquare,
   BookOpen,
-  Video,
   FileText,
   Globe,
   Headphones,
