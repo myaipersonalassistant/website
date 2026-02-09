@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -64,18 +64,7 @@ export default function ContactSubmissionsPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [noteText, setNoteText] = useState('');
 
-  useEffect(() => {
-    if (!authLoading) {
-      if (!isAuthenticated) {
-        router.push('/auth?view=login');
-        return;
-      }
-      // In production, check if user is admin
-      loadSubmissions();
-    }
-  }, [authLoading, isAuthenticated, router]);
-
-  const loadSubmissions = async () => {
+  const loadSubmissions = useCallback(async () => {
     try {
       setLoading(true);
       const q = query(collection(db, 'contact_submissions'), orderBy('createdAt', 'desc'));
@@ -95,7 +84,18 @@ export default function ContactSubmissionsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!authLoading) {
+      if (!isAuthenticated) {
+        router.push('/auth?view=login');
+        return;
+      }
+      // In production, check if user is admin
+      loadSubmissions();
+    }
+  }, [authLoading, isAuthenticated, router, loadSubmissions]);
 
   const handleStatusChange = async (submissionId: string, newStatus: ContactSubmission['status']) => {
     try {
@@ -132,15 +132,26 @@ export default function ContactSubmissionsPage() {
 
     try {
       const currentNotes = selectedSubmission.adminNotes || [];
-      const newNote = {
+      const now = new Date();
+      
+      // Note for Firestore (uses serverTimestamp)
+      const firestoreNote = {
         note: noteText,
         adminId: user.uid,
         adminName: user.displayName || user.email || 'Admin',
         createdAt: serverTimestamp()
       };
 
+      // Note for local state (uses Date)
+      const localNote = {
+        note: noteText,
+        adminId: user.uid,
+        adminName: user.displayName || user.email || 'Admin',
+        createdAt: now
+      };
+
       await updateDoc(doc(db, 'contact_submissions', selectedSubmission.id), {
-        adminNotes: [...currentNotes, newNote],
+        adminNotes: [...currentNotes, firestoreNote],
         updatedAt: serverTimestamp()
       });
 
@@ -149,7 +160,7 @@ export default function ContactSubmissionsPage() {
       if (selectedSubmission) {
         setSelectedSubmission({
           ...selectedSubmission,
-          adminNotes: [...currentNotes, newNote]
+          adminNotes: [...currentNotes, localNote]
         });
       }
     } catch (error) {
