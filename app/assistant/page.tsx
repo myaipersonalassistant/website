@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   Calendar,
   Brain,
@@ -61,10 +62,11 @@ import {
   EyeOff,
   Pin,
   Unplug,
-  ArrowRight
+  ArrowRight,
+  LayoutDashboard
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
-import { db } from '@/lib/firebase';
+import { getDb } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
 interface Conversation {
@@ -97,9 +99,9 @@ const AssistantPage: React.FC = () => {
   const [messageInput, setMessageInput] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeConversation, setActiveConversation] = useState<string | null>('today-briefing');
-  const [yourToolsExpanded, setYourToolsExpanded] = useState(true);
+  const [yourToolsExpanded, setYourToolsExpanded] = useState(false);
   const [toolsExpanded, setToolsExpanded] = useState(false);
-  const [conversationsExpanded, setConversationsExpanded] = useState(true);
+  const [conversationsExpanded, setConversationsExpanded] = useState(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [userName, setUserName] = useState('User');
   const [isTyping, setIsTyping] = useState(false);
@@ -297,7 +299,7 @@ const AssistantPage: React.FC = () => {
     const fetchUserData = async () => {
       if (user) {
         try {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          const userDoc = await getDoc(doc(getDb(), 'users', user.uid));
           if (userDoc.exists()) {
             const userData = userDoc.data();
             setUserName(userData.displayName || userData.name || user.displayName || 'User');
@@ -314,7 +316,18 @@ const AssistantPage: React.FC = () => {
   }, [user]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Only scroll if we're at the bottom or very close to it
+    if (messagesEndRef.current) {
+      const container = messagesEndRef.current.parentElement;
+      if (container) {
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+        if (isNearBottom) {
+          setTimeout(() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }, 100);
+        }
+      }
+    }
   }, [chatMessages, isTyping]);
 
   useEffect(() => {
@@ -339,7 +352,11 @@ const AssistantPage: React.FC = () => {
     }
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = (e?: React.MouseEvent | React.KeyboardEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!messageInput.trim()) return;
     // TODO: Implement actual message sending
     setMessageInput('');
@@ -350,7 +367,8 @@ const AssistantPage: React.FC = () => {
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSendMessage();
+      e.stopPropagation();
+      handleSendMessage(e);
     }
   };
 
@@ -362,7 +380,7 @@ const AssistantPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex items-center justify-center">
+      <div className="h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-slate-600">Loading...</p>
@@ -372,39 +390,55 @@ const AssistantPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex">
+    <div className="h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex overflow-hidden">
       {/* Sidebar */}
       <div className={`${
-        sidebarOpen ? 'w-80 lg:w-80' : 'w-0 lg:w-0'
-      } bg-white border-r border-slate-200 transition-all duration-300 flex flex-col overflow-hidden shadow-lg lg:shadow-none`}>
+        sidebarOpen ? 'w-80' : 'w-0'
+      } bg-white border-r border-slate-200 transition-all duration-300 flex flex-col h-[90%] overflow-hidden shadow-lg lg:shadow-none flex-shrink-0 lg:relative fixed lg:z-auto z-50`}>
         {/* Sidebar Header */}
-        <div className="p-4 sm:p-6 border-b border-slate-200 bg-gradient-to-br from-teal-50 to-cyan-50">
+        <div className="p-4 sm:p-6 border-b border-slate-200 bg-gradient-to-br from-teal-50 to-cyan-50 flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-xl flex items-center justify-center shadow-lg">
                 <Brain className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h2 className="font-bold text-lg text-slate-900">MAI-PA</h2>
+                <h2 className="font-bold text-base text-slate-900">MAI-PA</h2>
                 <div className="flex items-center gap-1 text-xs text-emerald-600">
                   <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
                   Online
                 </div>
               </div>
             </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="lg:hidden p-2 rounded-lg hover:bg-slate-100 transition-colors"
+            >
+              <X className="h-5 w-5 text-slate-600" />
+            </button>
           </div>
-          <button
-            onClick={startNewConversation}
-            className="w-full bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 text-white rounded-xl py-3 px-4 flex items-center justify-center gap-2 font-semibold transition-all duration-200 shadow-lg hover:shadow-xl active:scale-95"
-          >
-            <Plus className="h-5 w-5" />
-            <span className="hidden sm:inline">New Conversation</span>
-            <span className="sm:hidden">New</span>
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={startNewConversation}
+              className="w-full bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 text-white rounded-xl py-3 px-4 flex items-center justify-center gap-2 font-semibold transition-all duration-200 shadow-lg hover:shadow-xl active:scale-95"
+            >
+              <Plus className="h-5 w-5" />
+              <span className="hidden sm:inline">New Conversation</span>
+              <span className="sm:hidden">New</span>
+            </button>
+            <Link
+              href="/dashboard"
+              className="w-full bg-white hover:bg-slate-50 border-2 border-slate-200 hover:border-teal-300 text-slate-700 hover:text-teal-700 rounded-xl py-3 px-4 flex items-center justify-center gap-2 font-semibold transition-all duration-200 shadow-sm hover:shadow-md active:scale-95"
+            >
+              <LayoutDashboard className="h-5 w-5" />
+              <span className="hidden sm:inline">Dashboard</span>
+              <span className="sm:hidden">Home</span>
+            </Link>
+          </div>
         </div>
 
         {/* Your AI Tools Section */}
-        <div className="border-b border-slate-200">
+        <div className="border-b border-slate-200 flex-shrink-0">
           <button
             onClick={() => setYourToolsExpanded(!yourToolsExpanded)}
             className="w-full p-4 flex items-center justify-between hover:bg-slate-50 transition-colors"
@@ -431,8 +465,8 @@ const AssistantPage: React.FC = () => {
                         <Icon className="h-5 w-5 text-white" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-slate-800 group-hover:text-teal-700 transition-colors truncate">{tool.name}</p>
-                        <p className="text-xs text-slate-500 truncate">{tool.description}</p>
+                        <p className="text-xs font-medium text-slate-800 group-hover:text-teal-700 transition-colors truncate">{tool.name}</p>
+                        <p className="text-[11px] text-slate-500 truncate">{tool.description}</p>
                       </div>
                     </div>
                     <button
@@ -450,7 +484,7 @@ const AssistantPage: React.FC = () => {
         </div>
 
         {/* Tools Section (Expandable) */}
-        <div className="border-b border-slate-200">
+        <div className="border-b border-slate-200 flex-shrink-0">
           <button
             onClick={() => setToolsExpanded(!toolsExpanded)}
             className="w-full p-4 flex items-center justify-between hover:bg-slate-50 transition-colors"
@@ -478,8 +512,8 @@ const AssistantPage: React.FC = () => {
                           <Icon className="h-5 w-5 text-white" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-slate-800 group-hover:text-teal-700 transition-colors truncate">{tool.name}</p>
-                          <p className="text-xs text-slate-500 truncate">{tool.description}</p>
+                          <p className="text-xs font-medium text-slate-800 group-hover:text-teal-700 transition-colors truncate">{tool.name}</p>
+                          <p className="text-[11px] text-slate-500 truncate">{tool.description}</p>
                         </div>
                       </div>
                       <button
@@ -500,7 +534,7 @@ const AssistantPage: React.FC = () => {
         </div>
 
         {/* Conversation History */}
-        <div className="flex-1 overflow-y-auto border-b border-slate-200">
+        <div className="flex-1 overflow-y-auto border-b border-slate-200 min-h-0">
           <button
             onClick={() => setConversationsExpanded(!conversationsExpanded)}
             className="w-full p-4 flex items-center justify-between hover:bg-slate-50 transition-colors sticky top-0 bg-white z-10 border-b border-slate-200"
@@ -515,23 +549,28 @@ const AssistantPage: React.FC = () => {
           {conversationsExpanded && (
             <div className="px-4 pb-4 space-y-2">
               {conversations.map((conv) => (
-                <button
-                  key={conv.id}
-                  onClick={() => setActiveConversation(conv.id)}
-                  className={`w-full text-left p-3 rounded-xl transition-all duration-200 group ${
-                    activeConversation === conv.id
-                      ? 'bg-gradient-to-br from-teal-50 to-cyan-50 border-2 border-teal-300 shadow-sm'
-                      : 'hover:bg-slate-50 border border-transparent hover:border-slate-200'
-                  }`}
-                >
+                  <button
+                    key={conv.id}
+                    onClick={() => {
+                      setActiveConversation(conv.id);
+                      if (window.innerWidth < 1024) {
+                        setSidebarOpen(false);
+                      }
+                    }}
+                    className={`w-full text-left p-3 rounded-xl transition-all duration-200 group ${
+                      activeConversation === conv.id
+                        ? 'bg-gradient-to-br from-teal-50 to-cyan-50 border-2 border-teal-300 shadow-sm'
+                        : 'hover:bg-slate-50 border border-transparent hover:border-slate-200'
+                    }`}
+                  >
                   <div className="flex items-start justify-between gap-2 mb-1">
-                    <h4 className="text-sm font-medium text-slate-800 group-hover:text-teal-700 line-clamp-1">{conv.title}</h4>
+                    <h4 className="text-xs font-medium text-slate-800 group-hover:text-teal-700 line-clamp-1">{conv.title}</h4>
                     {conv.unread && (
                       <div className="w-2 h-2 bg-teal-500 rounded-full flex-shrink-0 mt-1"></div>
                     )}
                   </div>
-                  <p className="text-xs text-slate-600 line-clamp-1 mb-1">{conv.preview}</p>
-                  <span className="text-xs text-slate-500">{conv.timestamp}</span>
+                  <p className="text-[11px] text-slate-600 line-clamp-1 mb-1">{conv.preview}</p>
+                  <span className="text-[11px] text-slate-500">{conv.timestamp}</span>
                 </button>
               ))}
             </div>
@@ -539,15 +578,15 @@ const AssistantPage: React.FC = () => {
         </div>
 
         {/* User Profile */}
-        <div className="p-4 sm:p-6 border-t border-slate-200 bg-white">
+        <div className="p-2 sm:p-4 border-t border-slate-200 bg-white flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-full flex items-center justify-center flex-shrink-0 shadow-md">
                 <User className="h-5 w-5 text-white" />
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-slate-800 truncate">{userName}</p>
-                <p className="text-xs text-slate-500">Premium Plan</p>
+                <p className="text-xs font-medium text-slate-800 truncate">{userName}</p>
+                <p className="text-[11px] text-slate-500">Premium Plan</p>
               </div>
             </div>
             <button className="text-slate-400 hover:text-teal-600 transition-colors p-2 hover:bg-teal-50 rounded-lg flex-shrink-0">
@@ -558,9 +597,9 @@ const AssistantPage: React.FC = () => {
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 h-[90%] overflow-hidden">
         {/* Top Bar */}
-        <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-4 flex items-center justify-between shadow-sm">
+        <div className="bg-transparent border-b border-slate-200 px-4 sm:px-6 py-4 flex items-center justify-between shadow-none flex-shrink-0">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -569,10 +608,10 @@ const AssistantPage: React.FC = () => {
               {sidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
             </button>
             <div className="min-w-0">
-              <h1 className="text-base sm:text-lg font-bold text-slate-900 truncate">
+              <h1 className="text-sm sm:text-base font-bold text-slate-900 truncate">
                 {activeConversation === null ? 'New Conversation' : activeConversationData?.title || 'Conversation'}
               </h1>
-              <p className="text-xs sm:text-sm text-slate-500 truncate">
+              <p className="text-[11px] sm:text-xs text-slate-500 truncate">
                 {activeConversation === null ? 'How can I assist you?' : `Started at ${activeConversationData?.timestamp || ''}`}
               </p>
             </div>
@@ -595,28 +634,28 @@ const AssistantPage: React.FC = () => {
                 <div className="absolute right-0 top-12 w-56 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-20">
                   <button className="w-full px-4 py-2.5 text-left hover:bg-slate-50 transition-colors flex items-center gap-3 text-slate-700">
                     <Edit3 className="h-4 w-4" />
-                    <span className="text-sm font-medium">Rename Conversation</span>
+                    <span className="text-xs font-medium">Rename Conversation</span>
                   </button>
                   <button className="w-full px-4 py-2.5 text-left hover:bg-slate-50 transition-colors flex items-center gap-3 text-slate-700">
                     <Pin className="h-4 w-4" />
-                    <span className="text-sm font-medium">Pin Conversation</span>
+                    <span className="text-xs font-medium">Pin Conversation</span>
                   </button>
                   <button className="w-full px-4 py-2.5 text-left hover:bg-slate-50 transition-colors flex items-center gap-3 text-slate-700">
                     <Share2 className="h-4 w-4" />
-                    <span className="text-sm font-medium">Share</span>
+                    <span className="text-xs font-medium">Share</span>
                   </button>
                   <button className="w-full px-4 py-2.5 text-left hover:bg-slate-50 transition-colors flex items-center gap-3 text-slate-700">
                     <Download className="h-4 w-4" />
-                    <span className="text-sm font-medium">Export Chat</span>
+                    <span className="text-xs font-medium">Export Chat</span>
                   </button>
                   <div className="border-t border-slate-200 my-2"></div>
                   <button className="w-full px-4 py-2.5 text-left hover:bg-slate-50 transition-colors flex items-center gap-3 text-slate-700">
                     <Archive className="h-4 w-4" />
-                    <span className="text-sm font-medium">Archive</span>
+                    <span className="text-xs font-medium">Archive</span>
                   </button>
                   <button className="w-full px-4 py-2.5 text-left hover:bg-red-50 transition-colors flex items-center gap-3 text-red-600">
                     <Trash2 className="h-4 w-4" />
-                    <span className="text-sm font-medium">Delete Conversation</span>
+                    <span className="text-xs font-medium">Delete Conversation</span>
                   </button>
                 </div>
               </>
@@ -625,7 +664,7 @@ const AssistantPage: React.FC = () => {
         </div>
 
         {/* Chat Messages */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 min-h-0">
           {activeConversation === null ? (
             <div className="flex items-center justify-center h-full">
               <div className="max-w-4xl w-full text-center space-y-6 sm:space-y-8 px-4 sm:px-6">
@@ -633,8 +672,8 @@ const AssistantPage: React.FC = () => {
                   <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-3xl flex items-center justify-center mx-auto mb-4 sm:mb-6 shadow-xl">
                     <Brain className="h-8 w-8 sm:h-10 sm:w-10 text-white" />
                   </div>
-                  <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-3">How can I assist you today?</h2>
-                  <p className="text-sm sm:text-base text-slate-600">I'm your AI personal assistant, ready to help with your schedule, tasks, emails, and more.</p>
+                  <h2 className="text-lg sm:text-xl font-bold text-slate-900 mb-2 sm:mb-3">How can I assist you today?</h2>
+                  <p className="text-xs sm:text-sm text-slate-600">I'm your AI personal assistant, ready to help with your schedule, tasks, emails, and more.</p>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3">
@@ -648,7 +687,7 @@ const AssistantPage: React.FC = () => {
                         <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-gradient-to-br ${prompt.color} flex items-center justify-center mb-2 sm:mb-3 group-hover:scale-110 transition-transform shadow-md`}>
                           <Icon className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
                         </div>
-                        <p className="text-xs sm:text-sm font-medium text-slate-800 leading-snug">{prompt.text}</p>
+                        <p className="text-[11px] sm:text-xs font-medium text-slate-800 leading-snug">{prompt.text}</p>
                       </button>
                     );
                   })}
@@ -660,8 +699,8 @@ const AssistantPage: React.FC = () => {
                       <Sparkles className="h-4 w-4 text-white" />
                     </div>
                     <div>
-                      <h4 className="font-semibold text-teal-900 mb-1 text-sm sm:text-base">Pro Tip</h4>
-                      <p className="text-xs sm:text-sm text-teal-700 leading-relaxed">
+                      <h4 className="font-semibold text-teal-900 mb-1 text-xs sm:text-sm">Pro Tip</h4>
+                      <p className="text-[11px] sm:text-xs text-teal-700 leading-relaxed">
                         Click a suggestion above to get started, or type your own question in the message box below. I can help with scheduling, task management, email summaries, and much more!
                       </p>
                     </div>
@@ -696,7 +735,7 @@ const AssistantPage: React.FC = () => {
                             ? 'bg-gradient-to-br from-teal-500 to-cyan-600 text-white rounded-tr-none'
                             : 'bg-white border border-slate-200 rounded-tl-none'
                         }`}>
-                          <p className={`text-sm sm:text-base leading-relaxed whitespace-pre-line ${
+                          <p className={`text-xs sm:text-sm leading-relaxed whitespace-pre-line ${
                             isUser ? 'text-white' : 'text-slate-800'
                           }`}>
                             {message.content}
@@ -707,30 +746,35 @@ const AssistantPage: React.FC = () => {
                         {!isUser && (
                           <div className="flex items-center gap-1 sm:gap-2 mt-2 flex-wrap">
                             <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
                               className="text-slate-400 hover:text-teal-600 transition-colors p-1.5 hover:bg-teal-50 rounded-lg"
                               title="Play audio"
                             >
                               <Volume2 className="h-4 w-4" />
                             </button>
                             <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
                               className="text-slate-400 hover:text-slate-600 transition-colors p-1.5 hover:bg-slate-100 rounded-lg"
                               title="Copy message"
                             >
                               <Copy className="h-4 w-4" />
                             </button>
                             <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
                               className="text-slate-400 hover:text-slate-600 transition-colors p-1.5 hover:bg-slate-100 rounded-lg"
                               title="Regenerate"
                             >
                               <RotateCcw className="h-4 w-4" />
                             </button>
                             <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
                               className="text-slate-400 hover:text-green-600 transition-colors p-1.5 hover:bg-green-50 rounded-lg"
                               title="Good response"
                             >
                               <ThumbsUp className="h-4 w-4" />
                             </button>
                             <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
                               className="text-slate-400 hover:text-red-600 transition-colors p-1.5 hover:bg-red-50 rounded-lg"
                               title="Bad response"
                             >
@@ -745,7 +789,11 @@ const AssistantPage: React.FC = () => {
                             {message.suggestions.map((suggestion, idx) => (
                               <button
                                 key={idx}
-                                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-white hover:bg-slate-50 border border-slate-200 hover:border-teal-300 rounded-lg text-xs sm:text-sm font-medium text-slate-700 hover:text-teal-700 transition-all duration-200 active:scale-95"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-white hover:bg-slate-50 border border-slate-200 hover:border-teal-300 rounded-lg text-[11px] sm:text-xs font-medium text-slate-700 hover:text-teal-700 transition-all duration-200 active:scale-95"
                               >
                                 {suggestion}
                               </button>
@@ -753,7 +801,7 @@ const AssistantPage: React.FC = () => {
                           </div>
                         )}
 
-                        <span className="text-xs text-slate-500 mt-1">{message.timestamp}</span>
+                        <span className="text-[11px] text-slate-500 mt-1">{message.timestamp}</span>
                       </div>
                     </div>
                   </div>
@@ -781,7 +829,7 @@ const AssistantPage: React.FC = () => {
         </div>
 
         {/* Input Area */}
-        <div className="bg-white border-t border-slate-200 p-3 sm:p-4 shadow-lg">
+        <div className="bg-white border-t border-slate-200 p-3 sm:p-4 shadow-lg flex-shrink-0">
           <div className="max-w-4xl mx-auto">
             <div className="bg-slate-50 border-2 border-slate-200 rounded-2xl p-2 sm:p-3 focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-500/20 transition-all duration-200">
               <div className="flex items-end gap-2 sm:gap-3">
@@ -799,7 +847,7 @@ const AssistantPage: React.FC = () => {
                   onChange={(e) => setMessageInput(e.target.value)}
                   onKeyPress={handleKeyPress}
                   placeholder="Ask me anything or tell me what you need..."
-                  className="flex-1 bg-transparent border-none focus:outline-none resize-none max-h-32 text-slate-800 placeholder-slate-400 py-2 text-sm sm:text-base"
+                  className="flex-1 bg-transparent border-none focus:outline-none resize-none max-h-32 text-slate-800 placeholder-slate-400 py-2 text-xs sm:text-sm"
                   rows={1}
                 />
                 <div className="flex gap-1 sm:gap-2 flex-shrink-0">
@@ -807,7 +855,7 @@ const AssistantPage: React.FC = () => {
                     <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
                   </button>
                   <button
-                    onClick={handleSendMessage}
+                    onClick={(e) => handleSendMessage(e)}
                     disabled={!messageInput.trim()}
                     className="bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed text-white p-2 sm:p-3 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl active:scale-95"
                   >
@@ -816,7 +864,7 @@ const AssistantPage: React.FC = () => {
                 </div>
               </div>
             </div>
-            <p className="text-xs text-slate-500 text-center mt-2 sm:mt-3">
+            <p className="text-[11px] text-slate-500 text-center mt-2 sm:mt-3">
               MAI-PA can make mistakes. Consider checking important information.
             </p>
           </div>

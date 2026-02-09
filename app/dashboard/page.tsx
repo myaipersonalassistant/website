@@ -45,8 +45,9 @@ import {
   TrendingDown
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
-import { db } from '@/lib/firebase';
+import { getDb } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import DashboardSidebar from '@/app/components/DashboardSidebar';
 
 interface DashboardStats {
   upcomingEvents: number;
@@ -138,7 +139,7 @@ export default function DashboardPage() {
     if (!user) return;
     
     try {
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      const userDoc = await getDoc(doc(getDb(), 'users', user.uid));
       if (userDoc.exists()) {
         const userData = userDoc.data();
         setUserName(userData.fullName || userData.onboardingData?.userName || user.displayName || 'User');
@@ -372,15 +373,19 @@ export default function DashboardPage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500 mx-auto mb-4"></div>
-          <p className="text-slate-600">Loading your dashboard...</p>
+          <p className="text-xs text-slate-600">Loading your dashboard...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex flex-col">
-      <div className="flex-1">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex">
+      {/* Sidebar */}
+      <DashboardSidebar userName={userName} userEmail={user?.email || undefined} />
+
+      {/* Main Content */}
+      <div className="flex-1 lg:ml-0 min-w-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
           {/* Hero Section with Greeting */}
           <div className="mb-6 sm:mb-8">
@@ -390,11 +395,11 @@ export default function DashboardPage() {
                   <div className="p-1.5 sm:p-2 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-xl shadow-lg flex-shrink-0">
                     <Sun className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
                   </div>
-                  <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-slate-900 truncate">
+                  <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 truncate">
                     {getGreeting()}, {userName.split(' ')[0] || 'there'}!
                   </h1>
                 </div>
-                <p className="text-sm sm:text-base lg:text-lg text-slate-600">
+                <p className="text-xs sm:text-sm lg:text-base text-slate-600">
                   <span className="block sm:inline">{formatDate(currentTime)}</span>
                   <span className="hidden sm:inline"> • </span>
                   <span className="block sm:inline">{formatTime(currentTime)}</span>
@@ -407,11 +412,11 @@ export default function DashboardPage() {
                   className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-white border-2 border-slate-200 rounded-xl hover:border-teal-300 hover:shadow-lg transition-all active:scale-95"
                 >
                   <RefreshCw className={`h-4 w-4 text-slate-600 ${loading ? 'animate-spin' : ''}`} />
-                  <span className="text-xs sm:text-sm font-medium text-slate-700 hidden sm:inline">Refresh</span>
+                  <span className="text-[11px] sm:text-xs font-medium text-slate-700 hidden sm:inline">Refresh</span>
                 </button>
                 <Link
                   href="/assistant"
-                  className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-600 text-white rounded-xl hover:from-teal-600 hover:to-cyan-700 transition-all shadow-lg shadow-teal-200 active:scale-95 text-xs sm:text-sm font-semibold"
+                  className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-600 text-white rounded-xl hover:from-teal-600 hover:to-cyan-700 transition-all shadow-lg shadow-teal-200 active:scale-95 text-[11px] sm:text-xs font-semibold"
                 >
                   <MessageSquare className="h-4 w-4" />
                   <span className="hidden sm:inline">Ask Assistant</span>
@@ -427,7 +432,7 @@ export default function DashboardPage() {
               <div className="p-1.5 sm:p-2 bg-gradient-to-br from-teal-100 to-cyan-100 rounded-lg flex-shrink-0">
                 <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600" />
               </div>
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900">Productivity Overview</h2>
+              <h2 className="text-base sm:text-lg font-bold text-slate-900">Productivity Overview</h2>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
               {/* Productivity Score Card */}
@@ -437,18 +442,18 @@ export default function DashboardPage() {
                     <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                   </div>
                   <div className="text-right min-w-0 flex-1 ml-3">
-                    <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-0.5 sm:mb-1">85%</h3>
-                    <p className="text-xs text-slate-500">Score</p>
+                    <h3 className="text-xl sm:text-2xl font-bold text-slate-900 mb-0.5 sm:mb-1">85%</h3>
+                    <p className="text-[11px] text-slate-500">Score</p>
                   </div>
                 </div>
-                <h4 className="text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3">Productivity Score</h4>
+                <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-2 sm:mb-3">Productivity Score</h4>
                 <div className="w-full bg-slate-100 rounded-full h-2.5 sm:h-3 overflow-hidden">
                   <div 
                     className="bg-gradient-to-r from-teal-500 to-cyan-500 h-2.5 sm:h-3 rounded-full transition-all duration-500 shadow-sm"
                     style={{ width: '85%' }}
                   ></div>
                 </div>
-                <p className="text-xs text-slate-500 mt-2 line-clamp-1">Based on completed tasks and goals</p>
+                <p className="text-[11px] text-slate-500 mt-2 line-clamp-1">Based on completed tasks and goals</p>
               </div>
 
               {/* Weekly Goals Card */}
@@ -458,18 +463,18 @@ export default function DashboardPage() {
                     <Target className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                   </div>
                   <div className="text-right min-w-0 flex-1 ml-3">
-                    <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-0.5 sm:mb-1">12/15</h3>
-                    <p className="text-xs text-slate-500">Goals</p>
+                    <h3 className="text-xl sm:text-2xl font-bold text-slate-900 mb-0.5 sm:mb-1">12/15</h3>
+                    <p className="text-[11px] text-slate-500">Goals</p>
                   </div>
                 </div>
-                <h4 className="text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3">Weekly Goals</h4>
+                <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-2 sm:mb-3">Weekly Goals</h4>
                 <div className="w-full bg-slate-100 rounded-full h-2.5 sm:h-3 overflow-hidden">
                   <div 
                     className="bg-gradient-to-r from-cyan-500 to-blue-500 h-2.5 sm:h-3 rounded-full transition-all duration-500 shadow-sm"
                     style={{ width: '80%' }}
                   ></div>
                 </div>
-                <p className="text-xs text-slate-500 mt-2 line-clamp-1">3 goals remaining this week</p>
+                <p className="text-[11px] text-slate-500 mt-2 line-clamp-1">3 goals remaining this week</p>
               </div>
 
               {/* Tasks Completed Card */}
@@ -479,11 +484,11 @@ export default function DashboardPage() {
                     <Zap className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                   </div>
                   <div className="text-right min-w-0 flex-1 ml-3">
-                    <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-0.5 sm:mb-1">45</h3>
-                    <p className="text-xs text-slate-500">Tasks</p>
+                    <h3 className="text-xl sm:text-2xl font-bold text-slate-900 mb-0.5 sm:mb-1">45</h3>
+                    <p className="text-[11px] text-slate-500">Tasks</p>
                   </div>
                 </div>
-                <h4 className="text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3">Tasks Completed</h4>
+                <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-2 sm:mb-3">Tasks Completed</h4>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
                     <div 
@@ -491,9 +496,9 @@ export default function DashboardPage() {
                       style={{ width: '90%' }}
                     ></div>
                   </div>
-                  <span className="text-xs font-semibold text-amber-600 flex-shrink-0">90%</span>
+                  <span className="text-[11px] font-semibold text-amber-600 flex-shrink-0">90%</span>
                 </div>
-                <p className="text-xs text-slate-500 line-clamp-1">This month • 5 remaining</p>
+                <p className="text-[11px] text-slate-500 line-clamp-1">This month • 5 remaining</p>
               </div>
             </div>
           </div>
@@ -508,10 +513,10 @@ export default function DashboardPage() {
                 <div className="p-2 sm:p-3 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg sm:rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
                   <Calendar className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 text-white" />
                 </div>
-                <span className="text-2xl sm:text-3xl font-bold text-blue-600">{stats.upcomingEvents}</span>
+                <span className="text-xl sm:text-2xl font-bold text-blue-600">{stats.upcomingEvents}</span>
               </div>
-              <h3 className="text-xs sm:text-sm font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Upcoming Events</h3>
-              <p className="text-xs text-slate-500 hidden sm:block">In your calendar</p>
+              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Upcoming Events</h3>
+              <p className="text-[11px] text-slate-500 hidden sm:block">In your calendar</p>
             </Link>
 
             <Link
@@ -522,10 +527,10 @@ export default function DashboardPage() {
                 <div className="p-2 sm:p-3 bg-gradient-to-br from-teal-500 to-green-500 rounded-lg sm:rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
                   <Inbox className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 text-white" />
                 </div>
-                <span className="text-2xl sm:text-3xl font-bold text-teal-600">{stats.unprocessedEmails}</span>
+                <span className="text-xl sm:text-2xl font-bold text-teal-600">{stats.unprocessedEmails}</span>
               </div>
-              <h3 className="text-xs sm:text-sm font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Email Insights</h3>
-              <p className="text-xs text-slate-500 hidden sm:block">Awaiting review</p>
+              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Email Insights</h3>
+              <p className="text-[11px] text-slate-500 hidden sm:block">Awaiting review</p>
             </Link>
 
             <Link
@@ -536,10 +541,10 @@ export default function DashboardPage() {
                 <div className="p-2 sm:p-3 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg sm:rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
                   <ListTodo className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 text-white" />
                 </div>
-                <span className="text-2xl sm:text-3xl font-bold text-purple-600">{stats.pendingTasks}</span>
+                <span className="text-xl sm:text-2xl font-bold text-purple-600">{stats.pendingTasks}</span>
               </div>
-              <h3 className="text-xs sm:text-sm font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Pending Tasks</h3>
-              <p className="text-xs text-slate-500 hidden sm:block">Need your attention</p>
+              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Pending Tasks</h3>
+              <p className="text-[11px] text-slate-500 hidden sm:block">Need your attention</p>
             </Link>
 
             <Link
@@ -550,10 +555,10 @@ export default function DashboardPage() {
                 <div className="p-2 sm:p-3 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg sm:rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
                   <Bell className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 text-white" />
                 </div>
-                <span className="text-2xl sm:text-3xl font-bold text-orange-600">{stats.unreadNotifications}</span>
+                <span className="text-xl sm:text-2xl font-bold text-orange-600">{stats.unreadNotifications}</span>
               </div>
-              <h3 className="text-xs sm:text-sm font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Notifications</h3>
-              <p className="text-xs text-slate-500 hidden sm:block">Unread messages</p>
+              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Notifications</h3>
+              <p className="text-[11px] text-slate-500 hidden sm:block">Unread messages</p>
             </Link>
           </div>
 
@@ -568,11 +573,11 @@ export default function DashboardPage() {
                     <div className="p-1.5 sm:p-2 bg-gradient-to-br from-teal-100 to-cyan-100 rounded-lg flex-shrink-0">
                       <Calendar className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600" />
                     </div>
-                    <h2 className="text-lg sm:text-xl font-bold text-slate-900">Upcoming Schedule</h2>
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900">Upcoming Schedule</h2>
                   </div>
                   <Link
                     href="/calendar"
-                    className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm text-teal-600 hover:text-teal-700 font-semibold"
+                    className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-teal-600 hover:text-teal-700 font-semibold"
                   >
                     View All
                     <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -583,10 +588,10 @@ export default function DashboardPage() {
                   {upcomingActivities.length === 0 ? (
                     <div className="text-center py-8 sm:py-12">
                       <Calendar className="h-10 w-10 sm:h-12 sm:w-12 text-slate-300 mx-auto mb-3" />
-                      <p className="text-sm sm:text-base text-slate-500">No upcoming events</p>
+                      <p className="text-xs sm:text-sm text-slate-500">No upcoming events</p>
                       <Link
                         href="/calendar"
-                        className="inline-flex items-center gap-2 mt-4 text-xs sm:text-sm text-teal-600 hover:text-teal-700 font-semibold"
+                        className="inline-flex items-center gap-2 mt-4 text-[11px] sm:text-xs text-teal-600 hover:text-teal-700 font-semibold"
                       >
                         Add an Event
                         <ArrowRight className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -605,10 +610,10 @@ export default function DashboardPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4">
                             <div className="flex-1 min-w-0">
-                              <h3 className="text-sm sm:text-base font-semibold text-slate-900 mb-1 group-hover:text-teal-600 transition-colors line-clamp-1">
+                              <h3 className="text-xs sm:text-sm font-semibold text-slate-900 mb-1 group-hover:text-teal-600 transition-colors line-clamp-1">
                                 {activity.title}
                               </h3>
-                              <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-1.5 sm:gap-3 text-xs sm:text-sm text-slate-600">
+                              <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-1.5 sm:gap-3 text-[11px] sm:text-xs text-slate-600">
                                 <span className="flex items-center gap-1">
                                   <Clock className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
                                   <span className="line-clamp-1">{formatActivityDate(activity.start_date)}</span>
@@ -621,7 +626,7 @@ export default function DashboardPage() {
                                 )}
                               </div>
                             </div>
-                            <span className="px-2 sm:px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 flex-shrink-0 self-start sm:self-auto">
+                            <span className="px-2 sm:px-3 py-1 bg-white border border-slate-200 rounded-lg text-[11px] font-medium text-slate-700 flex-shrink-0 self-start sm:self-auto">
                               {activity.category}
                             </span>
                           </div>
@@ -639,11 +644,11 @@ export default function DashboardPage() {
                     <div className="p-1.5 sm:p-2 bg-gradient-to-br from-purple-100 to-pink-100 rounded-lg flex-shrink-0">
                       <ListTodo className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
                     </div>
-                    <h2 className="text-lg sm:text-xl font-bold text-slate-900">Pending Tasks</h2>
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900">Pending Tasks</h2>
                   </div>
                   <Link
                     href="/assistant"
-                    className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm text-teal-600 hover:text-teal-700 font-semibold"
+                    className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-teal-600 hover:text-teal-700 font-semibold"
                   >
                     View All
                     <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -654,8 +659,8 @@ export default function DashboardPage() {
                   {pendingTodos.length === 0 ? (
                     <div className="text-center py-8 sm:py-12">
                       <CheckCircle2 className="h-10 w-10 sm:h-12 sm:w-12 text-slate-300 mx-auto mb-3" />
-                      <p className="text-sm sm:text-base text-slate-500">No pending tasks</p>
-                      <p className="text-xs sm:text-sm text-slate-400 mt-1">You're all caught up!</p>
+                      <p className="text-xs sm:text-sm text-slate-500">No pending tasks</p>
+                      <p className="text-[11px] sm:text-xs text-slate-400 mt-1">You're all caught up!</p>
                     </div>
                   ) : (
                     pendingTodos.map((todo) => (
@@ -667,19 +672,19 @@ export default function DashboardPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4">
                             <div className="flex-1 min-w-0">
-                              <h3 className="text-sm sm:text-base font-semibold text-slate-900 mb-1 line-clamp-1">{todo.title}</h3>
+                              <h3 className="text-xs sm:text-sm font-semibold text-slate-900 mb-1 line-clamp-1">{todo.title}</h3>
                               {todo.description && (
-                                <p className="text-xs sm:text-sm text-slate-600 mb-2 line-clamp-2">{todo.description}</p>
+                                <p className="text-[11px] sm:text-xs text-slate-600 mb-2 line-clamp-2">{todo.description}</p>
                               )}
                               <div className="flex items-center gap-2">
                                 {todo.due_date && (
-                                  <span className="text-xs text-slate-500">
+                                  <span className="text-[11px] text-slate-500">
                                     Due: {new Date(todo.due_date).toLocaleDateString()}
                                   </span>
                                 )}
                               </div>
                             </div>
-                            <span className={`px-2 sm:px-3 py-1 border rounded-lg text-xs font-medium flex-shrink-0 self-start sm:self-auto ${getPriorityColor(todo.priority)}`}>
+                            <span className={`px-2 sm:px-3 py-1 border rounded-lg text-[11px] font-medium flex-shrink-0 self-start sm:self-auto ${getPriorityColor(todo.priority)}`}>
                               {todo.priority}
                             </span>
                           </div>
@@ -699,7 +704,7 @@ export default function DashboardPage() {
                   <div className="p-1.5 sm:p-2 bg-white/20 rounded-lg backdrop-blur-sm flex-shrink-0">
                     <Brain className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
                   </div>
-                  <h3 className="text-base sm:text-lg font-bold">AI Insights</h3>
+                  <h3 className="text-sm sm:text-base font-bold">AI Insights</h3>
                 </div>
                 <div className="space-y-2 sm:space-y-3">
                   {assistantInsights.map((insight) => {
@@ -714,12 +719,12 @@ export default function DashboardPage() {
                             <Icon className="h-3 w-3 sm:h-4 sm:w-4 text-white" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-xs sm:text-sm mb-1 line-clamp-1">{insight.title}</h4>
-                            <p className="text-xs text-white/90 mb-2 line-clamp-2">{insight.message}</p>
+                            <h4 className="font-semibold text-[11px] sm:text-xs mb-1 line-clamp-1">{insight.title}</h4>
+                            <p className="text-[11px] text-white/90 mb-2 line-clamp-2">{insight.message}</p>
                             {insight.action && insight.actionUrl && (
                               <Link
                                 href={insight.actionUrl}
-                                className="inline-flex items-center gap-1 text-xs font-medium text-white hover:text-teal-100 transition-colors"
+                                className="inline-flex items-center gap-1 text-[11px] font-medium text-white hover:text-teal-100 transition-colors"
                               >
                                 {insight.action}
                                 <ArrowRight className="h-3 w-3" />
@@ -733,7 +738,7 @@ export default function DashboardPage() {
                 </div>
                 <Link
                   href="/assistant"
-                  className="mt-3 sm:mt-4 w-full flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg sm:rounded-xl transition-all text-xs sm:text-sm font-semibold backdrop-blur-sm border border-white/30 active:scale-95"
+                  className="mt-3 sm:mt-4 w-full flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg sm:rounded-xl transition-all text-[11px] sm:text-xs font-semibold backdrop-blur-sm border border-white/30 active:scale-95"
                 >
                   <MessageSquare className="h-3 w-3 sm:h-4 sm:w-4" />
                   <span className="hidden sm:inline">Chat with Assistant</span>
@@ -748,11 +753,11 @@ export default function DashboardPage() {
                     <div className="p-1.5 sm:p-2 bg-gradient-to-br from-orange-100 to-red-100 rounded-lg flex-shrink-0">
                       <Bell className="h-4 w-4 sm:h-5 sm:w-5 text-orange-600" />
                     </div>
-                    <h2 className="text-lg sm:text-xl font-bold text-slate-900">Notifications</h2>
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900">Notifications</h2>
                   </div>
                   <Link
                     href="/notifications"
-                    className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm text-teal-600 hover:text-teal-700 font-semibold"
+                    className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-teal-600 hover:text-teal-700 font-semibold"
                   >
                     View All
                     <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -763,7 +768,7 @@ export default function DashboardPage() {
                   {recentNotifications.length === 0 ? (
                     <div className="text-center py-8 sm:py-12">
                       <Bell className="h-10 w-10 sm:h-12 sm:w-12 text-slate-300 mx-auto mb-3" />
-                      <p className="text-sm sm:text-base text-slate-500">No new notifications</p>
+                      <p className="text-xs sm:text-sm text-slate-500">No new notifications</p>
                     </div>
                   ) : (
                     recentNotifications.map((notification) => {
@@ -781,13 +786,13 @@ export default function DashboardPage() {
                             <IconComponent className="h-3 w-3 sm:h-4 sm:w-4 text-orange-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-slate-900 text-xs sm:text-sm mb-1 line-clamp-1">
+                            <h3 className="font-semibold text-slate-900 text-[11px] sm:text-xs mb-1 line-clamp-1">
                               {notification.title}
                             </h3>
-                            <p className="text-xs text-slate-600 mb-2 line-clamp-2">
+                            <p className="text-[11px] text-slate-600 mb-2 line-clamp-2">
                               {notification.message}
                             </p>
-                            <span className="text-xs text-slate-400">
+                            <span className="text-[11px] text-slate-400">
                               {new Date(notification.created_at).toLocaleTimeString('en-US', {
                                 hour: 'numeric',
                                 minute: '2-digit',

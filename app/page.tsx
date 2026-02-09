@@ -61,7 +61,7 @@ const InternalCalendarSection = () => {
   ];
 
   return (
-    <section className="py-20 bg-gradient-to-br from-slate-50 to-cyan-50 relative overflow-hidden">
+    <section className="py-20 bg-gradient-to-br from-slate-50 to-cyan-50 relative overflow-hidden hidden sm:block">
       {/* Background Elements */}
       <div className="absolute top-10 right-10 w-64 h-64 bg-gradient-to-br from-teal-200 to-cyan-300 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
       <div className="absolute bottom-10 left-10 w-80 h-80 bg-gradient-to-br from-cyan-200 to-blue-300 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse animation-delay-2000"></div>
@@ -347,7 +347,7 @@ export default function HomePage() {
                 </div>
                 
                 {/* Floating Badge - Glassmorphism */}
-                <div className="absolute -top-6 -right-6 bg-white px-6 py-4 rounded-2xl shadow-xl">
+                <div className="absolute -top-2 -right-6 bg-white px-6 py-4 rounded-2xl shadow-xl">
                   <div className="flex items-center gap-3">
                     <div className="bg-gradient-to-br from-teal-500 to-cyan-600 p-2 rounded-lg">
                       <TrendingUp className="h-5 w-5 text-white" />
@@ -355,19 +355,6 @@ export default function HomePage() {
                     <div>
                       <p className="text-slate-900 font-bold text-xl">+99%</p>
                       <p className="text-slate-600 text-xs">Productivity</p>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Floating Card - Glassmorphism */}
-                <div className="absolute -bottom-4 -left-4 backdrop-blur-md bg-white/80 px-6 py-4 rounded-2xl shadow-xl border border-white/40 hover:scale-105 transition-transform duration-300">
-                  <div className="flex items-center gap-3">
-                    <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-2 rounded-lg">
-                      <Clock className="h-5 w-5 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-slate-900 font-bold text-xl">5hrs +</p>
-                      <p className="text-slate-600 text-xs">Time Saved/Week</p>
                     </div>
                   </div>
                 </div>
@@ -624,7 +611,7 @@ export default function HomePage() {
       <InternalCalendarSection />
 
       {/* AI Assistant Section */}
-      <section id="ai-assistant" className="py-20 bg-white scroll-mt-24">
+      <section id="ai-assistant" className="py-20 bg-white scroll-mt-24 hidden sm:block">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div>
@@ -734,7 +721,7 @@ export default function HomePage() {
       </section>
 
       {/* Smart Calendar Section */}
-      <section id="smart-calendar" className="py-20 bg-gradient-to-br from-teal-50 to-emerald-50 scroll-mt-24">
+      <section id="smart-calendar" className="py-20 bg-gradient-to-br from-teal-50 to-emerald-50 scroll-mt-24 hidden sm:block">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div className="order-2 lg:order-1">
@@ -869,7 +856,7 @@ export default function HomePage() {
       </section>
 
       {/* Email Intelligence Section */}
-      <section id="email-intelligence" className="py-20 bg-white scroll-mt-24">
+      <section id="email-intelligence" className="py-20 bg-white scroll-mt-24 hidden sm:block">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div>

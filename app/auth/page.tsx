@@ -5,7 +5,7 @@ import Lottie from 'lottie-react';
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Mail, Lock, Eye, EyeOff, ArrowRight, CheckCircle, AlertCircle, User, Calendar, Sparkles, Shield, RefreshCw } from 'lucide-react';
-import { auth, db } from '@/lib/firebase';
+import { auth, db, getDb } from '@/lib/firebase';
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
@@ -24,7 +24,8 @@ type AuthView = 'login' | 'signup' | 'forgot-password' | 'verify-email' | 'reset
 // Helper function to check if user has completed onboarding
 const checkOnboardingStatus = async (userId: string): Promise<boolean> => {
   try {
-    const userDoc = await getDoc(doc(db, 'users', userId));
+    const dbInstance = getDb();
+    const userDoc = await getDoc(doc(dbInstance, 'users', userId));
     if (userDoc.exists()) {
       const userData = userDoc.data();
       return userData.onboardingCompleted === true;
@@ -146,7 +147,7 @@ export default function AuthPage() {
       const user = userCredential.user;
 
       // Create user document in Firestore with initial data
-      await setDoc(doc(db, 'users', user.uid), {
+      await setDoc(doc(getDb(), 'users', user.uid), {
         email: user.email,
         fullName: fullName,
         createdAt: serverTimestamp(),
@@ -263,9 +264,10 @@ export default function AuthPage() {
       const user = result.user;
 
       // Check if user document exists, if not create it
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      const dbInstance = getDb();
+      const userDoc = await getDoc(doc(dbInstance, 'users', user.uid));
       if (!userDoc.exists()) {
-        await setDoc(doc(db, 'users', user.uid), {
+        await setDoc(doc(dbInstance, 'users', user.uid), {
           email: user.email,
           fullName: user.displayName || '',
           createdAt: serverTimestamp(),
@@ -312,9 +314,10 @@ export default function AuthPage() {
       const user = result.user;
 
       // Check if user document exists, if not create it
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      const dbInstance = getDb();
+      const userDoc = await getDoc(doc(dbInstance, 'users', user.uid));
       if (!userDoc.exists()) {
-        await setDoc(doc(db, 'users', user.uid), {
+        await setDoc(doc(dbInstance, 'users', user.uid), {
           email: user.email,
           fullName: user.displayName || '',
           createdAt: serverTimestamp(),

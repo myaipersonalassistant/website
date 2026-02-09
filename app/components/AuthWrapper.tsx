@@ -54,13 +54,35 @@ export default function AuthWrapper({ children }: AuthWrapperProps) {
         });
       });
 
-      // Start observing
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['bis_skin_checked'],
-      });
+      // Start observing only if document.body exists
+      if (document.body) {
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['bis_skin_checked'],
+        });
+      } else {
+        // Wait for body to be available
+        const bodyObserver = new MutationObserver(() => {
+          if (document.body) {
+            observer.observe(document.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['bis_skin_checked'],
+            });
+            bodyObserver.disconnect();
+          }
+        });
+        bodyObserver.observe(document.documentElement, {
+          childList: true,
+        });
+        return () => {
+          observer.disconnect();
+          bodyObserver.disconnect();
+        };
+      }
 
       // Remove existing attributes
       removeExtensionAttributes();
