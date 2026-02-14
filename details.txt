@@ -106,3 +106,14 @@ Customizable alert preferences
 
 
 MAI-PA is not a productivity app with AI features – it's an AI assistant that uses productivity tools to help you. The assistant is the product; everything else is how it serves you.
+
+
+
+
+
+Subscriptions (/admin/subscriptions) — manage user subscriptions, plans, billing
+Analytics (/admin/analytics) — charts, metrics, growth trends
+Platform Health (/admin/health) — system status, uptime, performance
+Database (/admin/database) — Firestore management, collections, indexes
+API Usage (/admin/api) — API calls, rate limits, usage tracking
+Settings (/admin/settings) — admin configuration, system settings

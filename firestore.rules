@@ -1,0 +1,311 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Helper function to check if user owns the resource
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // ============================================
+    // USERS COLLECTION
+    // ============================================
+    match /users/{userId} {
+      // Users can read their own user document
+      allow read: if isOwner(userId);
+      
+      // Users can write their own user document (but not change role)
+      allow update: if isOwner(userId) && 
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) ||
+                        request.resource.data.role == resource.data.role);
+      
+      // Users can create their own user document
+      allow create: if isOwner(userId);
+      
+      // Admins can read/write all user documents
+      allow read, write: if isAdmin();
+      
+      // Admins can query the users collection
+      allow list: if isAdmin();
+      
+      // Subscription subcollection
+      match /subscription/{subscriptionId} {
+        // Users can read/write their own subscription
+        allow read, write: if isOwner(userId);
+        
+        // Admins can read all subscriptions
+        allow read: if isAdmin();
+        
+        // Admins can query subscriptions
+        allow list: if isAdmin();
+      }
+      
+      // Payment methods subcollection
+      match /payment_methods/{paymentMethodId} {
+        // Users can read/write their own payment methods
+        allow read, write: if isOwner(userId);
+        
+        // Users can create payment methods for themselves
+        allow create: if isOwner(userId) && 
+                          request.resource.data.keys().hasAll(['type', 'last4']);
+        
+        // Admins can read all payment methods
+        allow read: if isAdmin();
+        
+        // Admins can query payment methods
+        allow list: if isAdmin();
+      }
+      
+      // Invoices subcollection
+      match /invoices/{invoiceId} {
+        // Users can read their own invoices
+        allow read: if isOwner(userId);
+        
+        // Users cannot create invoices (only system can)
+        // Admins can read all invoices
+        allow read: if isAdmin();
+        
+        // Admins can query invoices
+        allow list: if isAdmin();
+      }
+
+      // Service connections subcollection (OAuth tokens)
+      match /service_connections/{connectionId} {
+        // Users can read/write their own service connections
+        allow read, write: if isOwner(userId);
+        
+        // Admins can read all service connections
+        allow read: if isAdmin();
+        
+        // Admins can query service connections
+        allow list: if isAdmin();
+      }
+      
+      // Conversations subcollection
+      match /conversations/{conversationId} {
+        // Users can read/write their own conversations
+        allow read, write: if isOwner(userId);
+        
+        // Admins can read all conversations
+        allow read: if isAdmin();
+        
+        // Admins can query conversations
+        allow list: if isAdmin();
+        
+        // Messages subcollection
+        match /messages/{messageId} {
+          // Users can read/write their own messages
+          allow read, write: if isOwner(userId);
+          
+          // Admins can read all messages
+          allow read: if isAdmin();
+          
+          // Admins can query messages
+          allow list: if isAdmin();
+        }
+      }
+    }
+    
+    // ============================================
+    // NOTIFICATIONS COLLECTION
+    // ============================================
+    match /notifications/{notificationId} {
+      // Users can only read/write their own notifications
+      allow read, write: if isAuthenticated() && 
+                               resource.data.userId == request.auth.uid;
+      
+      // Users can create notifications for themselves
+      allow create: if isAuthenticated() && 
+                          request.resource.data.userId == request.auth.uid;
+      
+      // Admins can read all notifications
+      allow read: if isAdmin();
+      
+      // Admins can also query the collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // CONTACT SUBMISSIONS COLLECTION
+    // ============================================
+    match /contact_submissions/{submissionId} {
+      // Anyone can create contact submissions (for contact form)
+      allow create: if request.resource.data.keys().hasAll(['name', 'email', 'subject', 'message']);
+      
+      // Users can read their own submissions (if they include their email)
+      allow read: if isAuthenticated() && 
+                       resource.data.email == request.auth.token.email;
+      
+      // Admins can read/write all contact submissions
+      allow read, write: if isAdmin();
+      
+      // Admins can also query the collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // EMAILS COLLECTION
+    // ============================================
+    match /emails/{emailId} {
+      // Users can only read/write their own emails
+      allow read, write: if isAuthenticated() && 
+                               resource.data.userId == request.auth.uid;
+      
+      // Users can create emails for themselves
+      allow create: if isAuthenticated() && 
+                          request.resource.data.userId == request.auth.uid;
+      
+      // Admins can read all emails
+      allow read: if isAdmin();
+      
+      // Admins can also query the collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // EXTRACTED ITEMS COLLECTION
+    // ============================================
+    match /extracted_items/{itemId} {
+      // Users can only read/write their own extracted items
+      allow read, write: if isAuthenticated() && 
+                               resource.data.userId == request.auth.uid;
+      
+      // Users can create extracted items for themselves
+      allow create: if isAuthenticated() && 
+                          request.resource.data.userId == request.auth.uid;
+      
+      // Admins can read all extracted items
+      allow read: if isAdmin();
+      
+      // Admins can also query the collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // EVENTS COLLECTION
+    // ============================================
+    match /events/{eventId} {
+      // Users can only read/write their own events
+      allow read, write: if isAuthenticated() && 
+                               resource.data.userId == request.auth.uid;
+      
+      // Users can create events for themselves
+      allow create: if isAuthenticated() && 
+                          request.resource.data.userId == request.auth.uid;
+      
+      // Admins can read all events
+      allow read: if isAdmin();
+      
+      // Admins can also query the collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // REMINDERS COLLECTION
+    // ============================================
+    match /reminders/{reminderId} {
+      // Users can only read/write their own reminders
+      allow read, write: if isAuthenticated() && 
+                               resource.data.userId == request.auth.uid;
+      
+      // Users can create reminders for themselves
+      allow create: if isAuthenticated() && 
+                          request.resource.data.userId == request.auth.uid;
+      
+      // Admins can read all reminders
+      allow read: if isAdmin();
+      
+      // Admins can also query the collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // TASKS COLLECTION
+    // ============================================
+    match /tasks/{taskId} {
+      // Users can only read/write their own tasks
+      allow read, write: if isAuthenticated() && 
+                               resource.data.userId == request.auth.uid;
+      
+      // Users can create tasks for themselves
+      allow create: if isAuthenticated() && 
+                          request.resource.data.userId == request.auth.uid;
+      
+      // Admins can read all tasks
+      allow read: if isAdmin();
+      
+      // Admins can also query the collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // VISITOR ANALYTICS COLLECTION
+    // ============================================
+    match /visitor_analytics/{analyticsId} {
+      // Anyone can create visitor analytics (for tracking page views)
+      // This allows unauthenticated users to be tracked
+      allow create: if request.resource.data.keys().hasAll(['visitorId', 'sessionId', 'path', 'timestamp']);
+      
+      // Allow updates for duration tracking (same visitor or admin)
+      allow update: if (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['visitorId', 'sessionId', 'path', 'timestamp']) ||
+                       (isAuthenticated() && request.resource.data.userId == request.auth.uid) ||
+                       isAdmin());
+      
+      // Only admins can read visitor analytics
+      allow read: if isAdmin();
+      
+      // Only admins can query the collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // ADMIN SETTINGS COLLECTION
+    // ============================================
+    match /admin_settings/{settingsId} {
+      // Only admins can read/write admin settings
+      allow read, write: if isAdmin();
+      
+      // Admins can query the admin settings collection
+      allow list: if isAdmin();
+    }
+    
+    // ============================================
+    // API USAGE COLLECTION
+    // ============================================
+    match /api_usage/{usageId} {
+      // Users can read their own usage records
+      allow read: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid;
+      
+      // Admins can read all usage records
+      allow read: if isAdmin();
+      
+      // Admins can also query the collection
+      allow list: if isAdmin();
+      
+      // Only backend (Firebase Admin SDK) can create/update usage records
+      // Client-side creation is not allowed for security
+    }
+    
+    // ============================================
+    // DEFAULT DENY
+    // ============================================
+    // All other collections are denied by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

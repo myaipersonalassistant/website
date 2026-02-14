@@ -6,11 +6,11 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowRight, ArrowLeft, Check,
   User, Volume2, Calendar, MessageSquare, Bell, Clock,
-  Sparkles, Heart, Brain, Zap, Users, Coffee, Mail
+  Sparkles, Heart, Brain, Zap, Users, Mail, Video
 } from 'lucide-react';
-import { auth, db } from '@/lib/firebase';
+import { auth, getDb } from '@/lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, serverTimestamp, collection, addDoc } from 'firebase/firestore';
 
 interface OnboardingData {
   aiName: string;
@@ -25,15 +25,18 @@ interface OnboardingData {
 }
 
 const RECOMMENDED_AI_NAMES = ['Luna', 'Atlas', 'Nova', 'Sage', 'MAI'];
-const VOICE_OPTIONS = [
-  { id: 'voice1', name: 'Aria', description: 'Warm and friendly', gender: 'Female' },
-  { id: 'voice2', name: 'James', description: 'Professional and clear', gender: 'Male' },
-  { id: 'voice3', name: 'Sophia', description: 'Energetic and upbeat', gender: 'Female' },
-  { id: 'voice4', name: 'Oliver', description: 'Calm and reassuring', gender: 'Male' },
-  { id: 'voice5', name: 'Emma', description: 'Conversational and natural', gender: 'Female' },
-  { id: 'voice6', name: 'Lucas', description: 'Direct and efficient', gender: 'Male' },
-  { id: 'voice7', name: 'Ava', description: 'Thoughtful and articulate', gender: 'Female' },
-  { id: 'voice8', name: 'Noah', description: 'Supportive and kind', gender: 'Male' },
+// Voice Options (10 premium voices)
+export const VOICE_OPTIONS = [
+  { id: 'gAMZphRyrWJnLMDnom6H', name: 'Keith', description: 'Deep and professional', gender: 'Male' },
+  { id: '6OzrBCQf8cjERkYgzSg8', name: 'Jamal', description: 'Black African American', gender: 'Male' },
+  { id: 'NQMJRVvPew6HsaebYnZj', name: 'Cecily', description: 'Conversational and warm', gender: 'Female' },
+  { id: '8L53MDQFE8FzIw7uiRtS', name: 'Michael', description: 'Nigerian and Conversational', gender: 'Male' },
+  { id: 'RpiHVNPKGBg7UmgmrKrN', name: 'Aashish', description: 'Natural Indian male', gender: 'Male' },
+  { id: 'AYQJi30bKdh5rHiPdUGX', name: 'Kaylin', description: 'Bright and energetic', gender: 'Female' },
+  { id: 'bCwW7dMszE8OyqvhCaQY', name: 'Connor', description: 'Calm and Neutral', gender: 'Male' },
+  { id: 'IQjnnInWsKbdAesop75D', name: 'John', description: 'Engaging and Clear', gender: 'Male' },
+  { id: 'EST9Ui6982FZPSi7gCHi', name: 'Elise', description: 'Warm, Natural and Engaging', gender: 'Female' },
+  { id: 'EnjklPXGBMNldCJ7jqkE', name: 'Bill', description: 'Casual and Balanced', gender: 'Male' },
 ];
 
 const PERSONALITY_TRAITS = [
@@ -48,8 +51,7 @@ const PERSONALITY_TRAITS = [
 const SERVICES = [
   { id: 'gmail', name: 'Gmail', icon: Mail, color: 'bg-red-500' },
   { id: 'google-calendar', name: 'Google Calendar', icon: Calendar, color: 'bg-blue-500' },
-  { id: 'slack', name: 'Slack', icon: MessageSquare, color: 'bg-purple-500' },
-  { id: 'notion', name: 'Notion', icon: Coffee, color: 'bg-slate-800' },
+  { id: 'zoom', name: 'Zoom', icon: Video, color: 'bg-blue-600' },
 ];
 
 const REFERRAL_SOURCES = [
@@ -65,9 +67,12 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [connectingService, setConnectingService] = useState<string | null>(null);
+  const [serviceStatus, setServiceStatus] = useState<Record<string, { status: string }>>({});
 
   const [formData, setFormData] = useState<OnboardingData>({
     aiName: 'MAI',
@@ -96,6 +101,24 @@ export default function OnboardingPage() {
 
       // Check if user has already completed onboarding
       try {
+        // Ensure Firebase is initialized
+        if (typeof window === 'undefined') {
+          setLoading(false);
+          return;
+        }
+        let db;
+        try {
+          db = getDb();
+        } catch (dbError) {
+          console.error('Firestore initialization error:', dbError);
+          setLoading(false);
+          return;
+        }
+        if (!db) {
+          console.error('Firestore is not initialized');
+          setLoading(false);
+          return;
+        }
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
         if (userDoc.exists()) {
           const userData = userDoc.data();
@@ -111,6 +134,14 @@ export default function OnboardingPage() {
               ...userData.onboardingData
             }));
           }
+          
+          // Load connected services
+          if (userData.connectedServices) {
+            setFormData(prev => ({
+              ...prev,
+              connectedServices: userData.connectedServices || []
+            }));
+          }
         }
       } catch (error) {
         console.error('Error checking onboarding status:', error);
@@ -121,6 +152,33 @@ export default function OnboardingPage() {
 
     return () => unsubscribe();
   }, [router]);
+
+  // Check for OAuth callback and fetch service status
+  useEffect(() => {
+    if (!user || loading) return;
+
+    // Check URL parameters for OAuth callback
+    const params = new URLSearchParams(window.location.search);
+    const service = params.get('service');
+    const connected = params.get('connected');
+    const error = params.get('error');
+
+    if (service) {
+      if (connected === 'true') {
+        // Service connected successfully
+        fetchServiceStatus();
+        // Clean URL
+        window.history.replaceState({}, '', '/onboarding');
+      } else if (error) {
+        // OAuth error
+        alert(`Failed to connect ${service}: ${error}`);
+        window.history.replaceState({}, '', '/onboarding');
+      }
+    } else {
+      // Fetch current service status
+      fetchServiceStatus();
+    }
+  }, [user, loading]);
 
   const handleNext = () => {
     if (currentStep < totalSteps) {
@@ -145,6 +203,26 @@ export default function OnboardingPage() {
 
       setSaving(true);
       try {
+        // Ensure Firebase is initialized
+        if (typeof window === 'undefined') {
+          alert('Firebase is not available. Please refresh the page.');
+          setSaving(false);
+          return;
+        }
+        let db;
+        try {
+          db = getDb();
+        } catch (dbError) {
+          console.error('Firestore initialization error:', dbError);
+          alert('Firestore is not initialized. Please check your environment variables.');
+          setSaving(false);
+          return;
+        }
+        if (!db) {
+          alert('Firestore is not initialized. Please check your environment variables.');
+          setSaving(false);
+          return;
+        }
         const userRef = doc(db, 'users', user.uid);
         
         // Update user document with onboarding data and mark as completed
@@ -164,6 +242,25 @@ export default function OnboardingPage() {
           // Update fullName if provided
           ...(formData.userName && { fullName: formData.userName }),
         });
+
+        // Create onboarding completion notification
+        try {
+          await addDoc(collection(db, 'notifications'), {
+            userId: user.uid,
+            title: `Welcome, ${formData.userName || 'there'}! 🎊`,
+            message: `Your AI assistant ${formData.aiName || 'MAI'} is ready to help! Start exploring your dashboard and let ${formData.aiName || 'MAI'} assist you with your daily tasks.`,
+            type: 'success',
+            category: 'system',
+            priority: 'high',
+            is_read: false,
+            is_archived: false,
+            action_url: '/dashboard',
+            created_at: serverTimestamp(),
+          });
+        } catch (notificationError) {
+          // Don't fail onboarding if notification creation fails
+          console.error('Error creating onboarding completion notification:', notificationError);
+        }
 
         // Redirect to dashboard after successful save
         router.push('/dashboard');
@@ -190,18 +287,198 @@ export default function OnboardingPage() {
     });
   };
 
-  const toggleService = (serviceId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      connectedServices: prev.connectedServices.includes(serviceId)
-        ? prev.connectedServices.filter(s => s !== serviceId)
-        : [...prev.connectedServices, serviceId]
-    }));
+  const connectService = async (serviceId: string) => {
+    if (!user || connectingService) return;
+
+    try {
+      setConnectingService(serviceId);
+      
+      // Get Firebase Auth token
+      const token = await user.getIdToken();
+      
+      // Get API base URL
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      const redirectUri = `${window.location.origin}/onboarding?service=${serviceId}&step=6`;
+      
+      // Initiate OAuth flow
+      const response = await fetch(`${API_BASE_URL}/services/connect/${serviceId}?redirectUri=${encodeURIComponent(redirectUri)}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to initiate connection');
+      }
+
+      const data = await response.json();
+      
+      // Redirect to OAuth provider
+      if (data.authUrl) {
+        window.location.href = data.authUrl;
+      }
+    } catch (error: any) {
+      console.error('Error connecting service:', error);
+      alert(`Failed to connect ${serviceId}: ${error.message || 'Please try again.'}`);
+      setConnectingService(null);
+    }
   };
 
-  const playVoicePreview = (voiceId: string) => {
+  const disconnectService = async (serviceId: string) => {
+    if (!user || connectingService) return;
+
+    try {
+      setConnectingService(serviceId);
+      
+      // Get Firebase Auth token
+      const token = await user.getIdToken();
+      
+      // Get API base URL
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      
+      // Disconnect service
+      const response = await fetch(`${API_BASE_URL}/services/disconnect/${serviceId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to disconnect service');
+      }
+
+      // Update local state
+      setFormData(prev => ({
+        ...prev,
+        connectedServices: prev.connectedServices.filter(s => s !== serviceId)
+      }));
+
+      // Refresh service status
+      await fetchServiceStatus();
+    } catch (error: any) {
+      console.error('Error disconnecting service:', error);
+      alert(`Failed to disconnect ${serviceId}: ${error.message || 'Please try again.'}`);
+    } finally {
+      setConnectingService(null);
+    }
+  };
+
+  const fetchServiceStatus = async () => {
+    if (!user) return;
+
+    try {
+      const token = await user.getIdToken();
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      
+      const response = await fetch(`${API_BASE_URL}/services/status`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setServiceStatus(data.connections || {});
+        
+        // Update connectedServices based on actual status
+        const connected = Object.keys(data.connections || {}).filter(
+          serviceId => data.connections[serviceId].status === 'connected'
+        );
+        
+        setFormData(prev => ({
+          ...prev,
+          connectedServices: connected
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching service status:', error);
+    }
+  };
+
+  const playVoicePreview = async (voiceId: string) => {
+    // Stop any currently playing audio
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.currentTime = 0;
+      // Clean up the previous audio URL if it exists
+      if (currentAudio.src.startsWith('blob:')) {
+        URL.revokeObjectURL(currentAudio.src);
+      }
+      setCurrentAudio(null);
+      setPlayingVoice(null);
+    }
+    
     setPlayingVoice(voiceId);
-    setTimeout(() => setPlayingVoice(null), 2000);
+    
+    try {
+      // Use the AI assistant name set by the user instead of the voice name
+      const aiName = formData.aiName || 'your AI assistant';
+      const previewText = `Hello, I'm ${aiName}. This is how I sound, and I look forward to helping you achieve more every day. Together, we'll manage your schedule, answer your questions, and make your life easier. Let's get started on your journey to greater productivity and peace of mind!`;
+      
+      // Get API key from environment variable
+      const API_KEY = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
+      
+      if (!API_KEY) {
+        console.warn('Voice API key not found. Add NEXT_PUBLIC_ELEVENLABS_API_KEY to your .env.local file');
+        // Fallback: Just show visual feedback
+        setTimeout(() => setPlayingVoice(null), 2000);
+        return;
+      }
+      
+      // Call voice API
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': API_KEY,
+        },
+        body: JSON.stringify({
+          text: previewText,
+          model_id: 'eleven_monolingual_v1',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.5,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        
+        // Store the audio instance
+        setCurrentAudio(audio);
+        
+        audio.onended = () => {
+          URL.revokeObjectURL(audioUrl);
+          setCurrentAudio(null);
+          setPlayingVoice(null);
+        };
+        
+        audio.onerror = () => {
+          URL.revokeObjectURL(audioUrl);
+          setCurrentAudio(null);
+          setPlayingVoice(null);
+        };
+        
+        await audio.play();
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Voice API error:', errorData);
+        // Fallback: Just show visual feedback if API call fails
+        setTimeout(() => setPlayingVoice(null), 2000);
+      }
+    } catch (error) {
+      console.error('Error playing voice preview:', error);
+      // Fallback: Just show visual feedback if there's an error
+      setTimeout(() => setPlayingVoice(null), 2000);
+    }
   };
 
   const renderStepContent = () => {
@@ -327,9 +604,10 @@ export default function OnboardingPage() {
                         e.stopPropagation();
                         playVoicePreview(voice.id);
                       }}
+                      disabled={playingVoice === voice.id}
                       className={`ml-4 p-2 rounded-full transition-all ${
                         playingVoice === voice.id
-                          ? 'bg-teal-500 text-white shadow-lg'
+                          ? 'bg-teal-500 text-white shadow-lg animate-pulse'
                           : 'bg-slate-100 text-slate-600 hover:bg-teal-100 hover:text-teal-600'
                       }`}
                     >
@@ -441,19 +719,26 @@ export default function OnboardingPage() {
               <p className="text-slate-600">Integrate tools to maximize {formData.aiName}'s capabilities</p>
             </div>
 
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4">
+              <p className="text-sm text-blue-800 text-center">
+                <strong>Note:</strong> Service connections are currently under development and will be available soon.
+              </p>
+            </div>
+
             <div className="space-y-3">
               {SERVICES.map((service) => {
                 const Icon = service.icon;
                 const isConnected = formData.connectedServices.includes(service.id);
+                const isConnecting = connectingService === service.id;
+                const status = serviceStatus[service.id];
+                
                 return (
-                  <button
+                  <div
                     key={service.id}
-                    type="button"
-                    onClick={() => toggleService(service.id)}
                     className={`w-full p-4 rounded-xl border-2 transition-all duration-200 ${
                       isConnected
                         ? 'border-teal-500 bg-teal-50 shadow-lg'
-                        : 'border-slate-300 hover:border-teal-300'
+                        : 'border-slate-300 bg-slate-50 opacity-60'
                     }`}
                   >
                     <div className="flex items-center justify-between">
@@ -463,15 +748,34 @@ export default function OnboardingPage() {
                         </div>
                         <span className="font-medium text-slate-900">{service.name}</span>
                       </div>
-                      {isConnected ? (
-                        <div className="bg-teal-500 text-white rounded-full px-3 py-1 text-sm font-medium shadow-md">
-                          Connected
-                        </div>
-                      ) : (
-                        <div className="text-slate-400 text-sm">Connect</div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {isConnected ? (
+                          <>
+                            <div className="bg-teal-500 text-white rounded-full px-3 py-1 text-sm font-medium shadow-md">
+                              Connected
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => disconnectService(service.id)}
+                              disabled={true}
+                              className="text-xs text-red-600 hover:text-red-700 px-2 py-1 hover:bg-red-50 rounded transition-colors disabled:opacity-50 cursor-not-allowed"
+                            >
+                              Disconnect
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => connectService(service.id)}
+                            disabled={true}
+                            className="px-4 py-2 rounded-lg text-sm font-medium transition-all bg-slate-300 text-slate-500 cursor-not-allowed"
+                          >
+                            Coming Soon
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>

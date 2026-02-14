@@ -287,7 +287,7 @@ export default function HomePage() {
 
   return (
     <>
-      <div className="min-h-screen bg-white">
+      <div className="min-h-screen bg-white" suppressHydrationWarning>
       {/* Hero Section */}
       <section id='action' className="relative bg-gradient-to-br from-slate-50 via-teal-50 to-cyan-50 pt-10 pb-32 overflow-hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

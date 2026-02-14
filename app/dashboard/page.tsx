@@ -46,7 +46,17 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 import { getDb } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { 
+  doc, 
+  getDoc, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  orderBy, 
+  limit,
+  Timestamp 
+} from 'firebase/firestore';
 import DashboardSidebar from '@/app/components/DashboardSidebar';
 
 interface DashboardStats {
@@ -114,6 +124,13 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [userName, setUserName] = useState<string>('');
+  const [productivityMetrics, setProductivityMetrics] = useState({
+    productivityScore: 0,
+    completedTasksThisMonth: 0,
+    totalTasksThisMonth: 0,
+    completedTasksThisWeek: 0,
+    totalTasksThisWeek: 0
+  });
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -139,156 +156,421 @@ export default function DashboardPage() {
     if (!user) return;
     
     try {
-      const userDoc = await getDoc(doc(getDb(), 'users', user.uid));
+      const db = getDb();
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      
       if (userDoc.exists()) {
         const userData = userDoc.data();
-        setUserName(userData.fullName || userData.onboardingData?.userName || user.displayName || 'User');
+        // Priority: 1. fullName, 2. onboardingData.userName, 3. settings.display_name, 4. auth displayName, 5. email prefix
+        setUserName(
+          userData.fullName || 
+          userData.onboardingData?.userName || 
+          userData.settings?.display_name || 
+          user.displayName || 
+          user.email?.split('@')[0] || 
+          'User'
+        );
+      } else {
+        // Fallback to auth user data if Firestore document doesn't exist
+        setUserName(user.displayName || user.email?.split('@')[0] || 'User');
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
+      // Fallback to auth user data on error
+      setUserName(user.displayName || user.email?.split('@')[0] || 'User');
     }
   };
 
   const fetchDashboardData = async () => {
+    if (!user) return;
+    
     try {
       setLoading(true);
+      const db = getDb();
+      const now = new Date();
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const nextWeek = new Date(now);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+
+      // Fetch upcoming events (all future events for count, next 7 days for display)
+      let upcomingEventsCount = 0;
+      let upcomingActivitiesData: CalendarActivity[] = [];
       
-      // Mock data for now - replace with actual Firebase queries later
-      const mockStats: DashboardStats = {
-        upcomingEvents: 5,
-        pendingTasks: 8,
-        unprocessedEmails: 12,
-        unreadNotifications: 3
-      };
-
-      const mockActivities: CalendarActivity[] = [
-        {
-          id: '1',
-          title: 'Team Standup',
-          start_date: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-          end_date: new Date(Date.now() + 2.5 * 60 * 60 * 1000).toISOString(),
-          category: 'meeting',
-          location: 'Conference Room A',
-          color: '#3b82f6'
-        },
-        {
-          id: '2',
-          title: 'Client Presentation',
-          start_date: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString(),
-          end_date: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
-          category: 'meeting',
-          location: 'Virtual',
-          color: '#8b5cf6'
-        },
-        {
-          id: '3',
-          title: 'Lunch with Sarah',
-          start_date: new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString(),
-          end_date: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-          category: 'personal',
-          location: 'Downtown Café',
-          color: '#10b981'
+      // Count all upcoming events
+      try {
+        const allEventsQuery = query(
+          collection(db, 'events'),
+          where('userId', '==', user.uid),
+          where('start_time', '>=', Timestamp.fromDate(now))
+        );
+        const allEventsSnapshot = await getDocs(allEventsQuery);
+        upcomingEventsCount = allEventsSnapshot.size;
+      } catch (err: any) {
+        // Fallback: fetch all and filter client-side
+        if (err.code === 'failed-precondition') {
+          const allEventsQueryFallback = query(
+            collection(db, 'events'),
+            where('userId', '==', user.uid)
+          );
+          const allEventsSnapshotFallback = await getDocs(allEventsQueryFallback);
+          let count = 0;
+          allEventsSnapshotFallback.forEach((doc) => {
+            const data = doc.data() as any;
+            const startTime = data.start_time instanceof Timestamp 
+              ? data.start_time.toDate() 
+              : new Date(data.start_time);
+            if (startTime >= now) count++;
+          });
+          upcomingEventsCount = count;
         }
-      ];
+      }
+      
+      // Fetch events for next 7 days for display
+      try {
+        const eventsQuery = query(
+          collection(db, 'events'),
+          where('userId', '==', user.uid),
+          where('start_time', '>=', Timestamp.fromDate(now)),
+          where('start_time', '<=', Timestamp.fromDate(nextWeek)),
+          orderBy('start_time', 'asc'),
+          limit(5)
+        );
+        const eventsSnapshot = await getDocs(eventsQuery);
+        
+        eventsSnapshot.forEach((doc) => {
+          const data = doc.data();
+          const startTime = data.start_time instanceof Timestamp 
+            ? data.start_time.toDate() 
+            : new Date(data.start_time);
+          const endTime = data.end_time instanceof Timestamp 
+            ? data.end_time.toDate() 
+            : data.end_time ? new Date(data.end_time) : undefined;
+          
+          upcomingActivitiesData.push({
+            id: doc.id,
+            title: data.title || 'Untitled Event',
+            start_date: startTime.toISOString(),
+            end_date: endTime?.toISOString(),
+            category: data.category || 'general',
+            location: data.location || undefined,
+            color: '#3b82f6'
+          });
+        });
+      } catch (err: any) {
+        // Fallback: fetch all user events and filter client-side
+        if (err.code === 'failed-precondition') {
+          const eventsQueryFallback = query(
+            collection(db, 'events'),
+            where('userId', '==', user.uid)
+          );
+          const eventsSnapshotFallback = await getDocs(eventsQueryFallback);
+          const allEvents: CalendarActivity[] = [];
+          
+          eventsSnapshotFallback.forEach((doc) => {
+            const data = doc.data();
+            const startTime = data.start_time instanceof Timestamp 
+              ? data.start_time.toDate() 
+              : new Date(data.start_time);
+            
+            if (startTime >= now && startTime <= nextWeek) {
+              const endTime = data.end_time instanceof Timestamp 
+                ? data.end_time.toDate() 
+                : data.end_time ? new Date(data.end_time) : undefined;
+              
+              allEvents.push({
+                id: doc.id,
+                title: data.title || 'Untitled Event',
+                start_date: startTime.toISOString(),
+                end_date: endTime?.toISOString(),
+                category: data.category || 'general',
+                location: data.location || undefined,
+                color: '#3b82f6'
+              });
+            }
+          });
+          
+          allEvents.sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
+          upcomingActivitiesData = allEvents.slice(0, 5);
+        }
+      }
+      
+      // Also fetch reminders for next 7 days and add to activities
+      try {
+        const remindersQuery = query(
+          collection(db, 'reminders'),
+          where('userId', '==', user.uid),
+          where('remind_at', '>=', Timestamp.fromDate(now)),
+          where('remind_at', '<=', Timestamp.fromDate(nextWeek)),
+          orderBy('remind_at', 'asc'),
+          limit(3)
+        );
+        const remindersSnapshot = await getDocs(remindersQuery);
+        
+        remindersSnapshot.forEach((doc) => {
+          const data = doc.data();
+          const remindAt = data.remind_at instanceof Timestamp 
+            ? data.remind_at.toDate() 
+            : new Date(data.remind_at);
+          
+          upcomingActivitiesData.push({
+            id: doc.id,
+            title: data.title || 'Untitled Reminder',
+            start_date: remindAt.toISOString(),
+            category: data.category || 'reminder',
+            location: undefined,
+            color: '#8b5cf6'
+          });
+        });
+        
+        // Sort all activities by date
+        upcomingActivitiesData.sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
+        upcomingActivitiesData = upcomingActivitiesData.slice(0, 5);
+      } catch (err: any) {
+        // Fallback: fetch all reminders and filter client-side
+        if (err.code === 'failed-precondition') {
+          const remindersQueryFallback = query(
+            collection(db, 'reminders'),
+            where('userId', '==', user.uid)
+          );
+          const remindersSnapshotFallback = await getDocs(remindersQueryFallback);
+          const allReminders: CalendarActivity[] = [];
+          
+          remindersSnapshotFallback.forEach((doc) => {
+            const data = doc.data();
+            const remindAt = data.remind_at instanceof Timestamp 
+              ? data.remind_at.toDate() 
+              : new Date(data.remind_at);
+            
+            if (remindAt >= now && remindAt <= nextWeek) {
+              allReminders.push({
+                id: doc.id,
+                title: data.title || 'Untitled Reminder',
+                start_date: remindAt.toISOString(),
+                category: data.category || 'reminder',
+                location: undefined,
+                color: '#8b5cf6'
+              });
+            }
+          });
+          
+          // Merge with existing activities and sort
+          upcomingActivitiesData = [...upcomingActivitiesData, ...allReminders];
+          upcomingActivitiesData.sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
+          upcomingActivitiesData = upcomingActivitiesData.slice(0, 5);
+        }
+      }
 
-      const mockNotifications: Notification[] = [
-        {
+      // Fetch pending tasks and calculate productivity metrics
+      let pendingTasksCount = 0;
+      let pendingTodosData: ExtractedTodo[] = [];
+      
+      // Calculate date ranges for this month and this week
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - now.getDay()); // Start of week (Sunday)
+      startOfWeek.setHours(0, 0, 0, 0);
+      
+      let totalTasks = 0;
+      let completedTasks = 0;
+      let completedTasksThisMonth = 0;
+      let totalTasksThisMonth = 0;
+      let completedTasksThisWeek = 0;
+      let totalTasksThisWeek = 0;
+      
+      // Fetch all tasks and filter client-side (to avoid 'in' query index issues)
+      try {
+        const tasksQuery = query(
+          collection(db, 'tasks'),
+          where('userId', '==', user.uid)
+        );
+        const tasksSnapshot = await getDocs(tasksQuery);
+        const allTasks: ExtractedTodo[] = [];
+        
+        tasksSnapshot.forEach((doc) => {
+          const data = doc.data();
+          const status = data.status || 'pending';
+          totalTasks++;
+          
+          // Check if completed
+          if (status === 'completed') {
+            completedTasks++;
+          }
+          
+          // Check created_at for this month/week calculations
+          const createdAt = data.created_at instanceof Timestamp 
+            ? data.created_at.toDate() 
+            : data.created_at ? new Date(data.created_at) : new Date();
+          
+          if (createdAt >= startOfMonth) {
+            totalTasksThisMonth++;
+            if (status === 'completed') {
+              completedTasksThisMonth++;
+            }
+          }
+          
+          if (createdAt >= startOfWeek) {
+            totalTasksThisWeek++;
+            if (status === 'completed') {
+              completedTasksThisWeek++;
+            }
+          }
+          
+          // Count pending/approved tasks
+          if (status === 'pending' || status === 'approved') {
+            pendingTasksCount++;
+            
+            const dueDate = data.due_date instanceof Timestamp 
+              ? data.due_date.toDate().toISOString() 
+              : data.due_date ? new Date(data.due_date).toISOString() : undefined;
+            
+            allTasks.push({
+              id: doc.id,
+              title: data.title || 'Untitled Task',
+              description: data.description || '',
+              due_date: dueDate,
+              priority: data.priority || 'normal',
+              status: status
+            });
+          }
+        });
+        
+        // Sort by due date (tasks without due dates go to end)
+        allTasks.sort((a, b) => {
+          if (!a.due_date) return 1;
+          if (!b.due_date) return -1;
+          return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+        });
+        
+        pendingTodosData = allTasks.slice(0, 5);
+      } catch (err: any) {
+        console.error('Error fetching tasks:', err);
+      }
+      
+      // Calculate productivity score (completed / total, or 0 if no tasks)
+      const productivityScore = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+      // Fetch unprocessed emails (pending extracted_items)
+      let unprocessedEmailsCount = 0;
+      try {
+        const extractedItemsQuery = query(
+          collection(db, 'extracted_items'),
+          where('userId', '==', user.uid),
+          where('status', '==', 'pending')
+        );
+        const extractedItemsSnapshot = await getDocs(extractedItemsQuery);
+        unprocessedEmailsCount = extractedItemsSnapshot.size;
+      } catch (err) {
+        console.error('Error fetching unprocessed emails:', err);
+      }
+
+      // Fetch unread notifications
+      let unreadNotificationsCount = 0;
+      let recentNotificationsData: Notification[] = [];
+      
+      // Fetch all notifications and filter client-side (to avoid index issues)
+      try {
+        const notificationsQuery = query(
+          collection(db, 'notifications'),
+          where('userId', '==', user.uid)
+        );
+        const notificationsSnapshot = await getDocs(notificationsQuery);
+        const allNotifications: Notification[] = [];
+        
+        notificationsSnapshot.forEach((doc) => {
+          const data = doc.data();
+          const createdAt = data.created_at instanceof Timestamp 
+            ? data.created_at.toDate().toISOString() 
+            : data.created_at ? new Date(data.created_at).toISOString() : new Date().toISOString();
+          
+          const isRead = data.is_read || false;
+          if (!isRead) {
+            unreadNotificationsCount++;
+          }
+          
+          allNotifications.push({
+            id: doc.id,
+            title: data.title || 'Notification',
+            message: data.message || '',
+            type: data.type || 'info',
+            category: data.category || 'general',
+            priority: data.priority || 'medium',
+            is_read: isRead,
+            created_at: createdAt,
+            action_url: data.action_url || undefined
+          });
+        });
+        
+        // Sort by created_at descending and take first 5
+        allNotifications.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        recentNotificationsData = allNotifications.slice(0, 5);
+      } catch (err: any) {
+        console.error('Error fetching notifications:', err);
+      }
+
+      // Generate AI insights based on actual data
+      const insights: AssistantInsight[] = [];
+      
+      if (upcomingEventsCount > 0) {
+        insights.push({
           id: '1',
-          title: 'Meeting in 2 hours',
-          message: 'Team Standup is scheduled for 10:00 AM in Conference Room A',
           type: 'reminder',
-          category: 'meeting',
-          priority: 'medium',
-          is_read: false,
-          created_at: new Date().toISOString(),
-          action_url: '/calendar'
-        },
-        {
-          id: '2',
-          title: 'Flight booking detected',
-          message: 'Your assistant found a flight confirmation in your emails',
-          type: 'info',
-          category: 'email',
-          priority: 'high',
-          is_read: false,
-          created_at: new Date(Date.now() - 3600000).toISOString(),
-          action_url: '/email-insights'
-        },
-        {
-          id: '3',
-          title: 'Daily briefing ready',
-          message: 'Your morning briefing is available. Would you like to hear it?',
-          type: 'activity',
-          category: 'briefing',
-          priority: 'low',
-          is_read: false,
-          created_at: new Date(Date.now() - 7200000).toISOString(),
-          action_url: '/assistant'
-        }
-      ];
-
-      const mockTodos: ExtractedTodo[] = [
-        {
-          id: '1',
-          title: 'Review Q1 marketing proposal',
-          description: 'Review and provide feedback on the Q1 marketing proposal',
-          due_date: new Date(Date.now() + 86400000).toISOString(),
-          priority: 'high',
-          status: 'pending'
-        },
-        {
-          id: '2',
-          title: 'Prepare slides for Friday presentation',
-          description: 'Create presentation slides for the Friday client meeting',
-          due_date: new Date(Date.now() + 3 * 86400000).toISOString(),
-          priority: 'high',
-          status: 'pending'
-        },
-        {
-          id: '3',
-          title: 'Follow up with John about budget',
-          description: 'Send follow-up email regarding the Q2 budget discussion',
-          priority: 'medium',
-          status: 'pending'
-        }
-      ];
-
-      const mockInsights: AssistantInsight[] = [
-        {
-          id: '1',
-          type: 'suggestion',
-          title: 'Schedule Focus Time',
-          message: 'You have 3 hours free tomorrow morning. Perfect for deep work on your presentation.',
-          action: 'Block Time',
+          title: `${upcomingEventsCount} Upcoming Event${upcomingEventsCount > 1 ? 's' : ''}`,
+          message: `You have ${upcomingEventsCount} event${upcomingEventsCount > 1 ? 's' : ''} coming up. Stay organized!`,
+          action: 'View Calendar',
           actionUrl: '/calendar',
-          icon: Lightbulb,
-          color: 'from-amber-500 to-yellow-500'
-        },
-        {
+          icon: Calendar,
+          color: 'from-blue-500 to-cyan-600'
+        });
+      }
+      
+      if (pendingTasksCount > 0) {
+        insights.push({
           id: '2',
-          type: 'reminder',
-          title: 'NYC Trip in 3 Days',
-          message: 'Your flight to New York is coming up. I\'ve prepared a travel checklist for you.',
-          action: 'View Checklist',
-          actionUrl: '/assistant',
-          icon: Plane,
-          color: 'from-sky-500 to-blue-600'
-        },
-        {
+          type: 'suggestion',
+          title: `${pendingTasksCount} Pending Task${pendingTasksCount > 1 ? 's' : ''}`,
+          message: `You have ${pendingTasksCount} task${pendingTasksCount > 1 ? 's' : ''} waiting for your attention.`,
+          action: 'View Tasks',
+          actionUrl: '/calendar',
+          icon: CheckSquare,
+          color: 'from-emerald-500 to-teal-600'
+        });
+      }
+      
+      if (unprocessedEmailsCount > 0) {
+        insights.push({
           id: '3',
-          type: 'achievement',
-          title: 'Productivity Streak!',
-          message: 'You\'ve completed 12 tasks this week. Keep up the great work!',
-          icon: Star,
-          color: 'from-purple-500 to-pink-500'
-        }
-      ];
+          type: 'insight',
+          title: `${unprocessedEmailsCount} Email Insight${unprocessedEmailsCount > 1 ? 's' : ''} Pending`,
+          message: `You have ${unprocessedEmailsCount} email insight${unprocessedEmailsCount > 1 ? 's' : ''} ready for review.`,
+          action: 'Review Now',
+          actionUrl: '/email-insights',
+          icon: Mail,
+          color: 'from-teal-500 to-cyan-600'
+        });
+      }
 
-      setStats(mockStats);
-      setUpcomingActivities(mockActivities);
-      setRecentNotifications(mockNotifications);
-      setPendingTodos(mockTodos);
-      setAssistantInsights(mockInsights);
+      // Set stats
+      setStats({
+        upcomingEvents: upcomingEventsCount,
+        pendingTasks: pendingTasksCount,
+        unprocessedEmails: unprocessedEmailsCount,
+        unreadNotifications: unreadNotificationsCount
+      });
+
+      setUpcomingActivities(upcomingActivitiesData);
+      setRecentNotifications(recentNotificationsData);
+      setPendingTodos(pendingTodosData);
+      setAssistantInsights(insights);
+      
+      // Set productivity metrics
+      setProductivityMetrics({
+        productivityScore,
+        completedTasksThisMonth,
+        totalTasksThisMonth,
+        completedTasksThisWeek,
+        totalTasksThisWeek
+      });
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -368,12 +650,13 @@ export default function DashboardPage() {
     }
   };
 
-  if (authLoading || loading) {
+  // Only show full-page loading during auth check
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500 mx-auto mb-4"></div>
-          <p className="text-xs text-slate-600">Loading your dashboard...</p>
+          <p className="text-xs text-slate-600">Loading...</p>
         </div>
       </div>
     );
@@ -395,11 +678,11 @@ export default function DashboardPage() {
                   <div className="p-1.5 sm:p-2 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-xl shadow-lg flex-shrink-0">
                     <Sun className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
                   </div>
-                  <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 truncate">
+                  <h1 className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">
                     {getGreeting()}, {userName.split(' ')[0] || 'there'}!
                   </h1>
                 </div>
-                <p className="text-xs sm:text-sm lg:text-base text-slate-600">
+                <p className="text-[11px] sm:text-xs lg:text-sm text-slate-600">
                   <span className="block sm:inline">{formatDate(currentTime)}</span>
                   <span className="hidden sm:inline"> • </span>
                   <span className="block sm:inline">{formatTime(currentTime)}</span>
@@ -412,11 +695,11 @@ export default function DashboardPage() {
                   className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-white border-2 border-slate-200 rounded-xl hover:border-teal-300 hover:shadow-lg transition-all active:scale-95"
                 >
                   <RefreshCw className={`h-4 w-4 text-slate-600 ${loading ? 'animate-spin' : ''}`} />
-                  <span className="text-[11px] sm:text-xs font-medium text-slate-700 hidden sm:inline">Refresh</span>
+                  <span className="text-[10px] sm:text-[11px] font-medium text-slate-700 hidden sm:inline">Refresh</span>
                 </button>
                 <Link
                   href="/assistant"
-                  className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-600 text-white rounded-xl hover:from-teal-600 hover:to-cyan-700 transition-all shadow-lg shadow-teal-200 active:scale-95 text-[11px] sm:text-xs font-semibold"
+                  className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-600 text-white rounded-xl hover:from-teal-600 hover:to-cyan-700 transition-all shadow-lg shadow-teal-200 active:scale-95 text-[10px] sm:text-[11px] font-semibold"
                 >
                   <MessageSquare className="h-4 w-4" />
                   <span className="hidden sm:inline">Ask Assistant</span>
@@ -432,9 +715,31 @@ export default function DashboardPage() {
               <div className="p-1.5 sm:p-2 bg-gradient-to-br from-teal-100 to-cyan-100 rounded-lg flex-shrink-0">
                 <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600" />
               </div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-900">Productivity Overview</h2>
+              <h2 className="text-sm sm:text-base font-bold text-slate-900">Productivity Overview</h2>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+            {loading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="bg-white border-2 border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm">
+                    <div className="animate-pulse">
+                      <div className="h-20 bg-slate-200 rounded-lg mb-3"></div>
+                      <div className="h-4 bg-slate-200 rounded w-3/4 mb-2"></div>
+                      <div className="h-2 bg-slate-200 rounded"></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+            <div className="
+              grid 
+              grid-cols-2 
+              grid-rows-2
+              sm:grid-cols-2 sm:grid-rows-1
+              lg:grid-cols-3 lg:grid-rows-1
+              gap-4 sm:gap-6
+              [&>*:nth-child(3)]:col-span-2
+              sm:[&>*:nth-child(3)]:col-span-1
+            ">
               {/* Productivity Score Card */}
               <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm hover:shadow-lg transition-all group">
                 <div className="flex items-center justify-between mb-3 sm:mb-4">
@@ -442,39 +747,43 @@ export default function DashboardPage() {
                     <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                   </div>
                   <div className="text-right min-w-0 flex-1 ml-3">
-                    <h3 className="text-xl sm:text-2xl font-bold text-slate-900 mb-0.5 sm:mb-1">85%</h3>
-                    <p className="text-[11px] text-slate-500">Score</p>
+                    <h3 className="text-lg sm:text-xl font-bold text-slate-900 mb-0.5 sm:mb-1">{productivityMetrics.productivityScore}%</h3>
+                    <p className="text-[10px] text-slate-500">Score</p>
                   </div>
                 </div>
-                <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-2 sm:mb-3">Productivity Score</h4>
+                <h4 className="text-[10px] sm:text-[11px] font-semibold text-slate-700 mb-2 sm:mb-3">Productivity Score</h4>
                 <div className="w-full bg-slate-100 rounded-full h-2.5 sm:h-3 overflow-hidden">
                   <div 
                     className="bg-gradient-to-r from-teal-500 to-cyan-500 h-2.5 sm:h-3 rounded-full transition-all duration-500 shadow-sm"
-                    style={{ width: '85%' }}
+                    style={{ width: `${productivityMetrics.productivityScore}%` }}
                   ></div>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-2 line-clamp-1">Based on completed tasks and goals</p>
+                <p className="text-[10px] text-slate-500 mt-2 line-clamp-1">Based on completed tasks</p>
               </div>
 
-              {/* Weekly Goals Card */}
+              {/* Weekly Tasks Card */}
               <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm hover:shadow-lg transition-all group">
                 <div className="flex items-center justify-between mb-3 sm:mb-4">
                   <div className="p-2 sm:p-3 bg-gradient-to-br from-cyan-500 to-blue-500 rounded-xl group-hover:scale-110 transition-transform shadow-lg flex-shrink-0">
                     <Target className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                   </div>
                   <div className="text-right min-w-0 flex-1 ml-3">
-                    <h3 className="text-xl sm:text-2xl font-bold text-slate-900 mb-0.5 sm:mb-1">12/15</h3>
-                    <p className="text-[11px] text-slate-500">Goals</p>
+                    <h3 className="text-lg sm:text-xl font-bold text-slate-900 mb-0.5 sm:mb-1">
+                      {productivityMetrics.completedTasksThisWeek}/{productivityMetrics.totalTasksThisWeek}
+                    </h3>
+                    <p className="text-[10px] text-slate-500">Tasks</p>
                   </div>
                 </div>
-                <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-2 sm:mb-3">Weekly Goals</h4>
+                <h4 className="text-[10px] sm:text-[11px] font-semibold text-slate-700 mb-2 sm:mb-3">This Week</h4>
                 <div className="w-full bg-slate-100 rounded-full h-2.5 sm:h-3 overflow-hidden">
                   <div 
                     className="bg-gradient-to-r from-cyan-500 to-blue-500 h-2.5 sm:h-3 rounded-full transition-all duration-500 shadow-sm"
-                    style={{ width: '80%' }}
+                    style={{ width: productivityMetrics.totalTasksThisWeek > 0 ? `${Math.round((productivityMetrics.completedTasksThisWeek / productivityMetrics.totalTasksThisWeek) * 100)}%` : '0%' }}
                   ></div>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-2 line-clamp-1">3 goals remaining this week</p>
+                <p className="text-[10px] text-slate-500 mt-2 line-clamp-1">
+                  {productivityMetrics.totalTasksThisWeek - productivityMetrics.completedTasksThisWeek} task{productivityMetrics.totalTasksThisWeek - productivityMetrics.completedTasksThisWeek !== 1 ? 's' : ''} remaining
+                </p>
               </div>
 
               {/* Tasks Completed Card */}
@@ -484,26 +793,44 @@ export default function DashboardPage() {
                     <Zap className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                   </div>
                   <div className="text-right min-w-0 flex-1 ml-3">
-                    <h3 className="text-xl sm:text-2xl font-bold text-slate-900 mb-0.5 sm:mb-1">45</h3>
-                    <p className="text-[11px] text-slate-500">Tasks</p>
+                    <h3 className="text-lg sm:text-xl font-bold text-slate-900 mb-0.5 sm:mb-1">{productivityMetrics.completedTasksThisMonth}</h3>
+                    <p className="text-[10px] text-slate-500">Tasks</p>
                   </div>
                 </div>
-                <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-2 sm:mb-3">Tasks Completed</h4>
+                <h4 className="text-[10px] sm:text-[11px] font-semibold text-slate-700 mb-2 sm:mb-3">Tasks Completed</h4>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
                     <div 
                       className="bg-gradient-to-r from-amber-500 to-yellow-500 h-2 rounded-full transition-all duration-500"
-                      style={{ width: '90%' }}
+                      style={{ width: productivityMetrics.totalTasksThisMonth > 0 ? `${Math.round((productivityMetrics.completedTasksThisMonth / productivityMetrics.totalTasksThisMonth) * 100)}%` : '0%' }}
                     ></div>
                   </div>
-                  <span className="text-[11px] font-semibold text-amber-600 flex-shrink-0">90%</span>
+                  <span className="text-[10px] font-semibold text-amber-600 flex-shrink-0">
+                    {productivityMetrics.totalTasksThisMonth > 0 ? Math.round((productivityMetrics.completedTasksThisMonth / productivityMetrics.totalTasksThisMonth) * 100) : 0}%
+                  </span>
                 </div>
-                <p className="text-[11px] text-slate-500 line-clamp-1">This month • 5 remaining</p>
+                <p className="text-[10px] text-slate-500 line-clamp-1">
+                  This month • {productivityMetrics.totalTasksThisMonth - productivityMetrics.completedTasksThisMonth} remaining
+                </p>
               </div>
             </div>
+            )}
           </div>
 
           {/* Stats Cards */}
+          {loading ? (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6 mb-6 sm:mb-8">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="bg-gradient-to-br from-slate-50 to-slate-100 border-2 border-slate-200 rounded-xl sm:rounded-2xl p-4 sm:p-6">
+                  <div className="animate-pulse">
+                    <div className="h-12 bg-slate-200 rounded-lg mb-3"></div>
+                    <div className="h-4 bg-slate-200 rounded w-2/3 mb-2"></div>
+                    <div className="h-3 bg-slate-200 rounded w-1/2"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6 mb-6 sm:mb-8">
             <Link
               href="/calendar"
@@ -513,10 +840,10 @@ export default function DashboardPage() {
                 <div className="p-2 sm:p-3 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg sm:rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
                   <Calendar className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 text-white" />
                 </div>
-                <span className="text-xl sm:text-2xl font-bold text-blue-600">{stats.upcomingEvents}</span>
+                <span className="text-lg sm:text-xl font-bold text-blue-600">{stats.upcomingEvents}</span>
               </div>
-              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Upcoming Events</h3>
-              <p className="text-[11px] text-slate-500 hidden sm:block">In your calendar</p>
+              <h3 className="text-[10px] sm:text-[11px] font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Upcoming Events</h3>
+              <p className="text-[10px] text-slate-500 hidden sm:block">In your calendar</p>
             </Link>
 
             <Link
@@ -527,10 +854,10 @@ export default function DashboardPage() {
                 <div className="p-2 sm:p-3 bg-gradient-to-br from-teal-500 to-green-500 rounded-lg sm:rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
                   <Inbox className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 text-white" />
                 </div>
-                <span className="text-xl sm:text-2xl font-bold text-teal-600">{stats.unprocessedEmails}</span>
+                <span className="text-lg sm:text-xl font-bold text-teal-600">{stats.unprocessedEmails}</span>
               </div>
-              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Email Insights</h3>
-              <p className="text-[11px] text-slate-500 hidden sm:block">Awaiting review</p>
+              <h3 className="text-[10px] sm:text-[11px] font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Email Insights</h3>
+              <p className="text-[10px] text-slate-500 hidden sm:block">Awaiting review</p>
             </Link>
 
             <Link
@@ -541,10 +868,10 @@ export default function DashboardPage() {
                 <div className="p-2 sm:p-3 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg sm:rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
                   <ListTodo className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 text-white" />
                 </div>
-                <span className="text-xl sm:text-2xl font-bold text-purple-600">{stats.pendingTasks}</span>
+                <span className="text-lg sm:text-xl font-bold text-purple-600">{stats.pendingTasks}</span>
               </div>
-              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Pending Tasks</h3>
-              <p className="text-[11px] text-slate-500 hidden sm:block">Need your attention</p>
+              <h3 className="text-[10px] sm:text-[11px] font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Pending Tasks</h3>
+              <p className="text-[10px] text-slate-500 hidden sm:block">Need your attention</p>
             </Link>
 
             <Link
@@ -555,12 +882,13 @@ export default function DashboardPage() {
                 <div className="p-2 sm:p-3 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg sm:rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
                   <Bell className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 text-white" />
                 </div>
-                <span className="text-xl sm:text-2xl font-bold text-orange-600">{stats.unreadNotifications}</span>
+                <span className="text-lg sm:text-xl font-bold text-orange-600">{stats.unreadNotifications}</span>
               </div>
-              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Notifications</h3>
-              <p className="text-[11px] text-slate-500 hidden sm:block">Unread messages</p>
+              <h3 className="text-[10px] sm:text-[11px] font-semibold text-slate-700 mb-0.5 sm:mb-1 line-clamp-1">Notifications</h3>
+              <p className="text-[10px] text-slate-500 hidden sm:block">Unread messages</p>
             </Link>
           </div>
+          )}
 
           {/* Main Content Grid */}
           <div className="grid lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
@@ -573,11 +901,11 @@ export default function DashboardPage() {
                     <div className="p-1.5 sm:p-2 bg-gradient-to-br from-teal-100 to-cyan-100 rounded-lg flex-shrink-0">
                       <Calendar className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600" />
                     </div>
-                    <h2 className="text-base sm:text-lg font-bold text-slate-900">Upcoming Schedule</h2>
+                    <h2 className="text-sm sm:text-base font-bold text-slate-900">Upcoming Schedule</h2>
                   </div>
                   <Link
                     href="/calendar"
-                    className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-teal-600 hover:text-teal-700 font-semibold"
+                    className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] text-teal-600 hover:text-teal-700 font-semibold"
                   >
                     View All
                     <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -585,13 +913,18 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="space-y-2 sm:space-y-3">
-                  {upcomingActivities.length === 0 ? (
+                  {loading ? (
+                    <div className="text-center py-8 sm:py-12">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-teal-500 mx-auto mb-3"></div>
+                      <p className="text-[11px] text-slate-500">Loading activities...</p>
+                    </div>
+                  ) : upcomingActivities.length === 0 ? (
                     <div className="text-center py-8 sm:py-12">
                       <Calendar className="h-10 w-10 sm:h-12 sm:w-12 text-slate-300 mx-auto mb-3" />
-                      <p className="text-xs sm:text-sm text-slate-500">No upcoming events</p>
+                      <p className="text-[11px] sm:text-xs text-slate-500">No upcoming events</p>
                       <Link
                         href="/calendar"
-                        className="inline-flex items-center gap-2 mt-4 text-[11px] sm:text-xs text-teal-600 hover:text-teal-700 font-semibold"
+                        className="inline-flex items-center gap-2 mt-4 text-[10px] sm:text-[11px] text-teal-600 hover:text-teal-700 font-semibold"
                       >
                         Add an Event
                         <ArrowRight className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -610,10 +943,10 @@ export default function DashboardPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4">
                             <div className="flex-1 min-w-0">
-                              <h3 className="text-xs sm:text-sm font-semibold text-slate-900 mb-1 group-hover:text-teal-600 transition-colors line-clamp-1">
+                              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-900 mb-1 group-hover:text-teal-600 transition-colors line-clamp-1">
                                 {activity.title}
                               </h3>
-                              <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-1.5 sm:gap-3 text-[11px] sm:text-xs text-slate-600">
+                              <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-1.5 sm:gap-3 text-[10px] sm:text-[11px] text-slate-600">
                                 <span className="flex items-center gap-1">
                                   <Clock className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
                                   <span className="line-clamp-1">{formatActivityDate(activity.start_date)}</span>
@@ -626,7 +959,7 @@ export default function DashboardPage() {
                                 )}
                               </div>
                             </div>
-                            <span className="px-2 sm:px-3 py-1 bg-white border border-slate-200 rounded-lg text-[11px] font-medium text-slate-700 flex-shrink-0 self-start sm:self-auto">
+                            <span className="px-2 sm:px-3 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-medium text-slate-700 flex-shrink-0 self-start sm:self-auto">
                               {activity.category}
                             </span>
                           </div>
@@ -644,11 +977,11 @@ export default function DashboardPage() {
                     <div className="p-1.5 sm:p-2 bg-gradient-to-br from-purple-100 to-pink-100 rounded-lg flex-shrink-0">
                       <ListTodo className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
                     </div>
-                    <h2 className="text-base sm:text-lg font-bold text-slate-900">Pending Tasks</h2>
+                    <h2 className="text-sm sm:text-base font-bold text-slate-900">Pending Tasks</h2>
                   </div>
                   <Link
                     href="/assistant"
-                    className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-teal-600 hover:text-teal-700 font-semibold"
+                    className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] text-teal-600 hover:text-teal-700 font-semibold"
                   >
                     View All
                     <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -656,11 +989,16 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="space-y-2 sm:space-y-3">
-                  {pendingTodos.length === 0 ? (
+                  {loading ? (
+                    <div className="text-center py-8 sm:py-12">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-teal-500 mx-auto mb-3"></div>
+                      <p className="text-[11px] text-slate-500">Loading tasks...</p>
+                    </div>
+                  ) : pendingTodos.length === 0 ? (
                     <div className="text-center py-8 sm:py-12">
                       <CheckCircle2 className="h-10 w-10 sm:h-12 sm:w-12 text-slate-300 mx-auto mb-3" />
-                      <p className="text-xs sm:text-sm text-slate-500">No pending tasks</p>
-                      <p className="text-[11px] sm:text-xs text-slate-400 mt-1">You're all caught up!</p>
+                      <p className="text-[11px] sm:text-xs text-slate-500">No pending tasks</p>
+                      <p className="text-[10px] sm:text-[11px] text-slate-400 mt-1">You're all caught up!</p>
                     </div>
                   ) : (
                     pendingTodos.map((todo) => (
@@ -672,19 +1010,19 @@ export default function DashboardPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4">
                             <div className="flex-1 min-w-0">
-                              <h3 className="text-xs sm:text-sm font-semibold text-slate-900 mb-1 line-clamp-1">{todo.title}</h3>
+                              <h3 className="text-[11px] sm:text-xs font-semibold text-slate-900 mb-1 line-clamp-1">{todo.title}</h3>
                               {todo.description && (
-                                <p className="text-[11px] sm:text-xs text-slate-600 mb-2 line-clamp-2">{todo.description}</p>
+                                <p className="text-[10px] sm:text-[11px] text-slate-600 mb-2 line-clamp-2">{todo.description}</p>
                               )}
                               <div className="flex items-center gap-2">
                                 {todo.due_date && (
-                                  <span className="text-[11px] text-slate-500">
+                                  <span className="text-[10px] text-slate-500">
                                     Due: {new Date(todo.due_date).toLocaleDateString()}
                                   </span>
                                 )}
                               </div>
                             </div>
-                            <span className={`px-2 sm:px-3 py-1 border rounded-lg text-[11px] font-medium flex-shrink-0 self-start sm:self-auto ${getPriorityColor(todo.priority)}`}>
+                            <span className={`px-2 sm:px-3 py-1 border rounded-lg text-[10px] font-medium flex-shrink-0 self-start sm:self-auto ${getPriorityColor(todo.priority)}`}>
                               {todo.priority}
                             </span>
                           </div>
@@ -704,37 +1042,50 @@ export default function DashboardPage() {
                   <div className="p-1.5 sm:p-2 bg-white/20 rounded-lg backdrop-blur-sm flex-shrink-0">
                     <Brain className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
                   </div>
-                  <h3 className="text-sm sm:text-base font-bold">AI Insights</h3>
+                  <h3 className="text-xs sm:text-sm font-bold">AI Insights</h3>
                 </div>
                 <div className="space-y-2 sm:space-y-3">
-                  {assistantInsights.map((insight) => {
-                    const Icon = insight.icon;
-                    return (
-                      <div
-                        key={insight.id}
-                        className="bg-white/10 backdrop-blur-sm rounded-lg sm:rounded-xl p-3 sm:p-4 border border-white/20 hover:bg-white/20 transition-all"
-                      >
-                        <div className="flex items-start gap-2 sm:gap-3">
-                          <div className={`p-1.5 sm:p-2 bg-gradient-to-br ${insight.color} rounded-lg flex-shrink-0`}>
-                            <Icon className="h-3 w-3 sm:h-4 sm:w-4 text-white" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-[11px] sm:text-xs mb-1 line-clamp-1">{insight.title}</h4>
-                            <p className="text-[11px] text-white/90 mb-2 line-clamp-2">{insight.message}</p>
-                            {insight.action && insight.actionUrl && (
-                              <Link
-                                href={insight.actionUrl}
-                                className="inline-flex items-center gap-1 text-[11px] font-medium text-white hover:text-teal-100 transition-colors"
-                              >
-                                {insight.action}
-                                <ArrowRight className="h-3 w-3" />
-                              </Link>
-                            )}
+                  {loading ? (
+                    <div className="text-center py-6">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white/50 mx-auto mb-2"></div>
+                      <p className="text-[10px] text-white/70">Loading insights...</p>
+                    </div>
+                  ) : assistantInsights.length === 0 ? (
+                    <div className="text-center py-6">
+                      <Sparkles className="h-8 w-8 text-white/50 mx-auto mb-2" />
+                      <p className="text-[10px] text-white/80">No insights at the moment</p>
+                      <p className="text-[9px] text-white/60 mt-1">Everything looks good!</p>
+                    </div>
+                  ) : (
+                    assistantInsights.map((insight) => {
+                      const Icon = insight.icon;
+                      return (
+                        <div
+                          key={insight.id}
+                          className="bg-white/10 backdrop-blur-sm rounded-lg sm:rounded-xl p-3 sm:p-4 border border-white/20 hover:bg-white/20 transition-all"
+                        >
+                          <div className="flex items-start gap-2 sm:gap-3">
+                            <div className={`p-1.5 sm:p-2 bg-gradient-to-br ${insight.color} rounded-lg flex-shrink-0`}>
+                              <Icon className="h-3 w-3 sm:h-4 sm:w-4 text-white" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-semibold text-[10px] sm:text-[11px] mb-1 line-clamp-1">{insight.title}</h4>
+                              <p className="text-[10px] text-white/90 mb-2 line-clamp-2">{insight.message}</p>
+                              {insight.action && insight.actionUrl && (
+                                <Link
+                                  href={insight.actionUrl}
+                                  className="inline-flex items-center gap-1 text-[10px] font-medium text-white hover:text-teal-100 transition-colors"
+                                >
+                                  {insight.action}
+                                  <ArrowRight className="h-3 w-3" />
+                                </Link>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
                 <Link
                   href="/assistant"
@@ -753,11 +1104,11 @@ export default function DashboardPage() {
                     <div className="p-1.5 sm:p-2 bg-gradient-to-br from-orange-100 to-red-100 rounded-lg flex-shrink-0">
                       <Bell className="h-4 w-4 sm:h-5 sm:w-5 text-orange-600" />
                     </div>
-                    <h2 className="text-base sm:text-lg font-bold text-slate-900">Notifications</h2>
+                    <h2 className="text-sm sm:text-base font-bold text-slate-900">Notifications</h2>
                   </div>
                   <Link
                     href="/notifications"
-                    className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-teal-600 hover:text-teal-700 font-semibold"
+                    className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] text-teal-600 hover:text-teal-700 font-semibold"
                   >
                     View All
                     <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -765,10 +1116,15 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="space-y-2 sm:space-y-3">
-                  {recentNotifications.length === 0 ? (
+                  {loading ? (
+                    <div className="text-center py-8 sm:py-12">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-teal-500 mx-auto mb-3"></div>
+                      <p className="text-[11px] text-slate-500">Loading notifications...</p>
+                    </div>
+                  ) : recentNotifications.length === 0 ? (
                     <div className="text-center py-8 sm:py-12">
                       <Bell className="h-10 w-10 sm:h-12 sm:w-12 text-slate-300 mx-auto mb-3" />
-                      <p className="text-xs sm:text-sm text-slate-500">No new notifications</p>
+                      <p className="text-[11px] sm:text-xs text-slate-500">No new notifications</p>
                     </div>
                   ) : (
                     recentNotifications.map((notification) => {
@@ -786,13 +1142,13 @@ export default function DashboardPage() {
                             <IconComponent className="h-3 w-3 sm:h-4 sm:w-4 text-orange-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-slate-900 text-[11px] sm:text-xs mb-1 line-clamp-1">
+                            <h3 className="font-semibold text-slate-900 text-[10px] sm:text-[11px] mb-1 line-clamp-1">
                               {notification.title}
                             </h3>
-                            <p className="text-[11px] text-slate-600 mb-2 line-clamp-2">
+                            <p className="text-[10px] text-slate-600 mb-2 line-clamp-2">
                               {notification.message}
                             </p>
-                            <span className="text-[11px] text-slate-400">
+                            <span className="text-[10px] text-slate-400">
                               {new Date(notification.created_at).toLocaleTimeString('en-US', {
                                 hour: 'numeric',
                                 minute: '2-digit',

@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/useAuth';
 import { useEffect } from 'react';
 import Header from './Header';
 import Footer from './Footer';
+import VisitorTracker from './VisitorTracker';
 
 interface AuthWrapperProps {
   children: React.ReactNode;
@@ -97,6 +98,7 @@ export default function AuthWrapper({ children }: AuthWrapperProps) {
 
   return (
     <>
+      <VisitorTracker />
       <Header userRole={userRole} user={user} />
       {children}
       <Footer userRole={userRole} />

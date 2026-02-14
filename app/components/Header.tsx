@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -8,12 +8,27 @@ import {
   Calendar, Menu, X, ChevronDown, Search, Bell, Plus,
   User, Settings, CreditCard, LogOut, HelpCircle, Zap,
   Download, LogIn, Briefcase, Users, BookOpen, TrendingUp,
-  Shield, BarChart3, Database, Mail, GraduationCap, Sparkles
+  Shield, BarChart3, Database, Mail, GraduationCap, Sparkles, MessagesSquare
 } from 'lucide-react';
 import { LucideIcon } from 'lucide-react';
 import { User as FirebaseUser } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { signOut } from 'firebase/auth';
+import { getDb } from '@/lib/firebase';
+import { collection, query, where, getDocs, orderBy, limit, Timestamp } from 'firebase/firestore';
+
+interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error' | 'reminder' | 'activity' | 'system';
+  category: 'meeting' | 'flight' | 'task' | 'briefing' | 'calendar' | 'email' | 'general' | 'system';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  is_read: boolean;
+  is_archived: boolean;
+  action_url?: string;
+  created_at: string;
+}
 
 interface DropdownItem {
   name: string;
@@ -42,7 +57,12 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [headerNotifications, setHeaderNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [emailInsightsCount, setEmailInsightsCount] = useState(0);
 
   const pathname = usePathname();
 
@@ -52,6 +72,11 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
   const searchRef = useRef<HTMLDivElement>(null);
 
   const isActive = (path: string) => pathname === path;
+
+  // Compute authentication status early (before useEffects that use it)
+  const isAuthenticated = userRole === 'user' || userRole === 'admin';
+  const isAdmin = userRole === 'admin';
+  const showAuthButtons = userRole === 'guest';
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -85,6 +110,211 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // Fetch notifications for header directly from Firestore
+  useEffect(() => {
+    const fetchHeaderNotifications = async () => {
+      if (!user || !isAuthenticated) {
+        setHeaderNotifications([]);
+        setUnreadCount(0);
+        return;
+      }
+
+      try {
+        setLoadingNotifications(true);
+        const db = getDb();
+        
+        // Fetch unread count
+        try {
+          const unreadQuery = query(
+            collection(db, 'notifications'),
+            where('userId', '==', user.uid),
+            where('is_read', '==', false),
+            where('is_archived', '==', false)
+          );
+          const unreadSnapshot = await getDocs(unreadQuery);
+          setUnreadCount(unreadSnapshot.size);
+        } catch (error: any) {
+          // Fallback: fetch all and filter client-side
+          if (error.code === 'failed-precondition') {
+            const allQuery = query(
+              collection(db, 'notifications'),
+              where('userId', '==', user.uid)
+            );
+            const allSnapshot = await getDocs(allQuery);
+            const unreadCount = allSnapshot.docs.filter(
+              doc => !doc.data().is_read && !doc.data().is_archived
+            ).length;
+            setUnreadCount(unreadCount);
+          } else {
+            console.error('Error fetching unread count:', error);
+            setUnreadCount(0);
+          }
+        }
+
+        // Fetch recent notifications (only if dropdown is open or we need the count)
+        if (showNotifications || unreadCount > 0) {
+          try {
+            const recentQuery = query(
+              collection(db, 'notifications'),
+              where('userId', '==', user.uid),
+              where('is_archived', '==', false),
+              orderBy('created_at', 'desc'),
+              limit(5)
+            );
+            const recentSnapshot = await getDocs(recentQuery);
+            const notifications: Notification[] = recentSnapshot.docs.map(doc => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                title: data.title || '',
+                message: data.message || '',
+                type: data.type || 'info',
+                category: data.category || 'general',
+                priority: data.priority || 'medium',
+                is_read: data.is_read || false,
+                is_archived: data.is_archived || false,
+                action_url: data.action_url,
+                created_at: data.created_at?.toDate?.()?.toISOString() || data.created_at || new Date().toISOString()
+              };
+            });
+            setHeaderNotifications(notifications);
+          } catch (error: any) {
+            // Fallback: fetch all and filter/sort client-side
+            if (error.code === 'failed-precondition') {
+              const allQuery = query(
+                collection(db, 'notifications'),
+                where('userId', '==', user.uid)
+              );
+              const allSnapshot = await getDocs(allQuery);
+              let notifications: Notification[] = allSnapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                  id: doc.id,
+                  title: data.title || '',
+                  message: data.message || '',
+                  type: data.type || 'info',
+                  category: data.category || 'general',
+                  priority: data.priority || 'medium',
+                  is_read: data.is_read || false,
+                  is_archived: data.is_archived || false,
+                  action_url: data.action_url,
+                  created_at: data.created_at?.toDate?.()?.toISOString() || data.created_at || new Date().toISOString()
+                };
+              });
+              
+              // Filter and sort client-side
+              notifications = notifications
+                .filter(n => !n.is_archived)
+                .sort((a, b) => {
+                  const dateA = new Date(a.created_at).getTime();
+                  const dateB = new Date(b.created_at).getTime();
+                  return dateB - dateA;
+                })
+                .slice(0, 5);
+              
+              setHeaderNotifications(notifications);
+            } else {
+              console.error('Error fetching recent notifications:', error);
+              setHeaderNotifications([]);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching header notifications:', error);
+        setHeaderNotifications([]);
+        setUnreadCount(0);
+      } finally {
+        setLoadingNotifications(false);
+      }
+    };
+
+    fetchHeaderNotifications();
+    
+    // Refresh notifications every 30 seconds
+    const interval = setInterval(fetchHeaderNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [user, isAuthenticated, showNotifications]);
+
+  // Fetch email insights count (pending items)
+  useEffect(() => {
+    const fetchEmailInsightsCount = async () => {
+      if (!user || !isAuthenticated) {
+        setEmailInsightsCount(0);
+        return;
+      }
+
+      try {
+        // Ensure Firebase is initialized
+        if (typeof window === 'undefined') {
+          setEmailInsightsCount(0);
+          return;
+        }
+        let db;
+        try {
+          db = getDb();
+        } catch (dbError) {
+          // Silently fail if Firestore is not initialized
+          setEmailInsightsCount(0);
+          return;
+        }
+        if (!db) {
+          setEmailInsightsCount(0);
+          return;
+        }
+        // Fetch pending extracted items for the user
+        const itemsQuery = query(
+          collection(db, 'extracted_items'),
+          where('userId', '==', user.uid),
+          where('status', '==', 'pending')
+        );
+        const itemsSnapshot = await getDocs(itemsQuery);
+        setEmailInsightsCount(itemsSnapshot.size);
+      } catch (error: any) {
+        // Handle Firestore index errors gracefully
+        if (error?.code === 'failed-precondition' || error?.code === 9 || error?.message?.includes('INTERNAL ASSERTION')) {
+          // Index missing or internal error - fallback to fetching all user items and filtering client-side
+          try {
+            let db;
+            try {
+              db = getDb();
+            } catch (dbError) {
+              setEmailInsightsCount(0);
+              return;
+            }
+            if (!db) {
+              setEmailInsightsCount(0);
+              return;
+            }
+            const fallbackQuery = query(
+              collection(db, 'extracted_items'),
+              where('userId', '==', user.uid)
+            );
+            const fallbackSnapshot = await getDocs(fallbackQuery);
+            const pendingCount = fallbackSnapshot.docs.filter(
+              doc => doc.data().status === 'pending'
+            ).length;
+            setEmailInsightsCount(pendingCount);
+          } catch (fallbackError) {
+            // Silently fail - don't spam console with errors
+            setEmailInsightsCount(0);
+          }
+        } else {
+          // Only log non-index errors
+          if (!error?.message?.includes('INTERNAL ASSERTION')) {
+            console.error('Error fetching email insights count:', error);
+          }
+          setEmailInsightsCount(0);
+        }
+      }
+    };
+
+    fetchEmailInsightsCount();
+    
+    // Refresh count every 30 seconds
+    const interval = setInterval(fetchEmailInsightsCount, 30000);
+    return () => clearInterval(interval);
+  }, [user, isAuthenticated]);
 
   // Navigation configurations
   const marketingNav: NavItem[] = [
@@ -120,12 +350,13 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
     { name: 'Pricing', href: '/pricing' },
   ];
 
-  const dashboardNav: NavItem[] = [
+  // Dashboard navigation with dynamic badge (computed with useMemo)
+  const dashboardNav: NavItem[] = useMemo(() => [
     { name: 'Dashboard', href: '/dashboard' },
     { name: 'Assistant', href: '/assistant' },
-    { name: 'Email Insights', href: '/email-insights', badge: 3 },
+    { name: 'Email Insights', href: '/email-insights', badge: emailInsightsCount > 0 ? emailInsightsCount : undefined },
     { name: 'Calendar', href: '/calendar' },
-  ];
+  ], [emailInsightsCount]);
 
   const adminNav: NavItem[] = [
     { 
@@ -158,31 +389,138 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
         { name: 'API Usage', href: '/admin/api', icon: BarChart3 },
       ]
     },
-    { name: 'Analytics', href: '/admin/analytics' },
   ];
 
-  const isAuthenticated = userRole === 'user' || userRole === 'admin';
-  const isAdmin = userRole === 'admin';
-  const showAuthButtons = userRole === 'guest';
   const currentNav = isAdmin ? adminNav : isAuthenticated ? dashboardNav : marketingNav;
 
   const quickActions = [
-    { name: 'New Activity', icon: Plus },
-    { name: 'Ask Assistant', icon: Sparkles },
+    { name: 'New Activity', icon: Plus, href: '/calendar/new' },
+    { name: 'Ask Assistant', icon: Sparkles, href: '/assistant' },
   ];
 
   const profileMenuItems = [
     { name: 'My Profile', href: '/profile', icon: User },
     { name: 'Settings', href: '/settings', icon: Settings },
     { name: 'Billing', href: '/billing', icon: CreditCard },
-    { name: 'Help & Support', href: '/help', icon: HelpCircle },
+    { name: 'Contact Us', href: '/contact', icon: MessagesSquare },
   ];
 
-  const notifications = [
-    { text: 'Meeting in 15 minutes', time: '5m ago' },
-    { text: 'Flight booking detected', time: '1h ago' },
-    { text: 'Daily briefing ready', time: '2h ago' },
+  // Searchable pages/routes
+  interface SearchablePage {
+    name: string;
+    href: string;
+    icon: LucideIcon;
+    category: string;
+    keywords: string[];
+    requiresAuth?: boolean;
+    requiresAdmin?: boolean;
+  }
+
+  const searchablePages: SearchablePage[] = [
+    // Main Dashboard Pages
+    { name: 'Dashboard', href: '/dashboard', icon: BarChart3, category: 'Main', keywords: ['dashboard', 'home', 'overview', 'main'], requiresAuth: true },
+    { name: 'Assistant', href: '/assistant', icon: Sparkles, category: 'Main', keywords: ['assistant', 'ai', 'chat', 'help', 'ask'], requiresAuth: true },
+    { name: 'Calendar', href: '/calendar', icon: Calendar, category: 'Main', keywords: ['calendar', 'schedule', 'events', 'meetings'], requiresAuth: true },
+    { name: 'New Activity', href: '/calendar/new', icon: Plus, category: 'Main', keywords: ['new activity', 'create event', 'add task', 'new event', 'new reminder'], requiresAuth: true },
+    { name: 'Email Insights', href: '/email-insights', icon: Mail, category: 'Main', keywords: ['email', 'insights', 'emails', 'messages'], requiresAuth: true },
+    { name: 'Notifications', href: '/notifications', icon: Bell, category: 'Main', keywords: ['notifications', 'alerts', 'notices'], requiresAuth: true },
+    
+    // Profile & Settings
+    { name: 'Profile', href: '/profile', icon: User, category: 'Account', keywords: ['profile', 'user', 'account', 'me'], requiresAuth: true },
+    { name: 'Settings', href: '/settings', icon: Settings, category: 'Account', keywords: ['settings', 'preferences', 'config', 'options'], requiresAuth: true },
+    { name: 'Billing', href: '/billing', icon: CreditCard, category: 'Account', keywords: ['billing', 'payment', 'subscription', 'plan', 'invoice'], requiresAuth: true },
+    
+    // Public Pages
+    { name: 'Pricing', href: '/pricing', icon: TrendingUp, category: 'Public', keywords: ['pricing', 'plans', 'subscribe', 'cost', 'price'] },
+    { name: 'Contact', href: '/contact', icon: MessagesSquare, category: 'Public', keywords: ['contact', 'support', 'help', 'reach out'] },
+    { name: 'Help Center', href: '/help_center', icon: HelpCircle, category: 'Public', keywords: ['help', 'support', 'faq', 'documentation'] },
+    { name: 'FAQ', href: '/faq', icon: BookOpen, category: 'Public', keywords: ['faq', 'questions', 'answers', 'help'] },
+    { name: 'Community', href: '/community', icon: Users, category: 'Public', keywords: ['community', 'forum', 'discuss'] },
+    { name: 'Download', href: '/download', icon: Download, category: 'Public', keywords: ['download', 'app', 'install'] },
+    
+    // Admin Pages
+    { name: 'Admin Dashboard', href: '/admin', icon: Shield, category: 'Admin', keywords: ['admin', 'dashboard', 'management'], requiresAuth: true, requiresAdmin: true },
+    { name: 'All Users', href: '/admin/users', icon: Users, category: 'Admin', keywords: ['users', 'admin', 'manage users'], requiresAuth: true, requiresAdmin: true },
+    { name: 'Subscriptions', href: '/admin/subscriptions', icon: CreditCard, category: 'Admin', keywords: ['subscriptions', 'admin', 'plans'], requiresAuth: true, requiresAdmin: true },
+    { name: 'Analytics', href: '/admin/analytics', icon: BarChart3, category: 'Admin', keywords: ['analytics', 'stats', 'metrics', 'admin'], requiresAuth: true, requiresAdmin: true },
+    { name: 'Contact Submissions', href: '/admin/contact-submissions', icon: Mail, category: 'Admin', keywords: ['contact', 'submissions', 'admin', 'inquiries'], requiresAuth: true, requiresAdmin: true },
+    { name: 'Platform Health', href: '/admin/health', icon: Shield, category: 'Admin', keywords: ['health', 'status', 'admin', 'system'], requiresAuth: true, requiresAdmin: true },
+    { name: 'Database', href: '/admin/database', icon: Database, category: 'Admin', keywords: ['database', 'admin', 'data'], requiresAuth: true, requiresAdmin: true },
+    { name: 'API Usage', href: '/admin/api', icon: BarChart3, category: 'Admin', keywords: ['api', 'usage', 'admin'], requiresAuth: true, requiresAdmin: true },
   ];
+
+  // Filter searchable pages based on query and permissions
+  const filteredPages = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    
+    const query = searchQuery.toLowerCase().trim();
+    return searchablePages
+      .filter(page => {
+        // Check authentication requirement
+        if (page.requiresAuth && !isAuthenticated) return false;
+        // Check admin requirement
+        if (page.requiresAdmin && !isAdmin) return false;
+        
+        // Search in name, category, and keywords
+        const matchesName = page.name.toLowerCase().includes(query);
+        const matchesCategory = page.category.toLowerCase().includes(query);
+        const matchesKeywords = page.keywords.some(keyword => keyword.includes(query));
+        const matchesHref = page.href.toLowerCase().includes(query);
+        
+        return matchesName || matchesCategory || matchesKeywords || matchesHref;
+      })
+      .slice(0, 8); // Limit to 8 results
+  }, [searchQuery, isAuthenticated, isAdmin]);
+
+  // Handle keyboard navigation in search
+  useEffect(() => {
+    if (!showSearch) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedSearchIndex(prev => 
+          prev < filteredPages.length - 1 ? prev + 1 : prev
+        );
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedSearchIndex(prev => prev > 0 ? prev - 1 : 0);
+      } else if (e.key === 'Enter' && filteredPages.length > 0) {
+        e.preventDefault();
+        const selectedPage = filteredPages[selectedSearchIndex];
+        if (selectedPage) {
+          router.push(selectedPage.href);
+          setShowSearch(false);
+          setSearchQuery('');
+          setSelectedSearchIndex(0);
+        }
+      } else if (e.key === 'Escape') {
+        setShowSearch(false);
+        setSearchQuery('');
+        setSelectedSearchIndex(0);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showSearch, filteredPages, selectedSearchIndex, router]);
+
+  // Reset selected index when search query changes
+  useEffect(() => {
+    setSelectedSearchIndex(0);
+  }, [searchQuery]);
+
+  const getTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (seconds < 60) return 'Just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
 
   const handleSignOut = async () => {
     try {
@@ -196,7 +534,7 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
 
   return (
     <>
-      <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+      <header className={`fixed top-0 left-0 right-0 z-40 lg:z-50 transition-all duration-300 ${
         isScrolled
           ? 'bg-white/80 backdrop-blur-lg shadow-lg border-b border-slate-200/50'
           : 'bg-white/95 backdrop-blur-md shadow-sm border-b border-slate-200'
@@ -318,24 +656,26 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
 
               {isAuthenticated && (
                 <>
-                  {/* Search with Glass Effect */}
+                  {/* Search with Quick Navigation */}
                   <div className="relative" ref={searchRef}>
                     {!showSearch ? (
                       <button
                         onClick={() => setShowSearch(true)}
                         className="p-2 rounded-lg text-slate-600 hover:bg-teal-50 hover:text-teal-700 transition-colors"
+                        title="Search pages (Ctrl+K)"
                       >
                         <Search className="h-5 w-5" />
                       </button>
                     ) : (
-                      <div className="absolute right-0 top-0 w-80 bg-white rounded-lg shadow-lg border border-teal-200 p-2">
-                        <div className="flex items-center space-x-2">
-                          <Search className="h-5 w-5 text-teal-500" />
+                      <div className="absolute right-0 top-0 w-96 bg-white rounded-xl shadow-xl border border-teal-200 overflow-hidden z-50">
+                        {/* Search Input */}
+                        <div className="flex items-center space-x-2 p-3 border-b border-slate-100">
+                          <Search className="h-5 w-5 text-teal-500 flex-shrink-0" />
                           <input
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Search..."
+                            placeholder="Search pages, features, and more..."
                             autoFocus
                             className="flex-1 outline-none text-sm text-slate-700 placeholder-slate-400"
                           />
@@ -343,12 +683,93 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
                             onClick={() => {
                               setShowSearch(false);
                               setSearchQuery('');
+                              setSelectedSearchIndex(0);
                             }}
-                            className="p-1 hover:bg-slate-100 rounded"
+                            className="p-1 hover:bg-slate-100 rounded transition-colors"
+                            title="Close (Esc)"
                           >
                             <X className="h-4 w-4 text-slate-400" />
                           </button>
                         </div>
+
+                        {/* Search Results */}
+                        {searchQuery.trim() && (
+                          <div className="max-h-96 overflow-y-auto">
+                            {filteredPages.length === 0 ? (
+                              <div className="p-6 text-center">
+                                <Search className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+                                <p className="text-sm text-slate-500">No results found</p>
+                                <p className="text-xs text-slate-400 mt-1">Try a different search term</p>
+                              </div>
+                            ) : (
+                              <div className="py-2">
+                                {filteredPages.map((page, index) => {
+                                  const Icon = page.icon;
+                                  const isSelected = index === selectedSearchIndex;
+                                  return (
+                                    <Link
+                                      key={page.href}
+                                      href={page.href}
+                                      onClick={() => {
+                                        setShowSearch(false);
+                                        setSearchQuery('');
+                                        setSelectedSearchIndex(0);
+                                      }}
+                                      className={`flex items-center gap-3 px-4 py-3 hover:bg-teal-50 transition-colors cursor-pointer ${
+                                        isSelected ? 'bg-teal-50' : ''
+                                      }`}
+                                    >
+                                      <div className={`p-2 rounded-lg flex-shrink-0 ${
+                                        page.category === 'Main' ? 'bg-blue-100 text-blue-600' :
+                                        page.category === 'Account' ? 'bg-purple-100 text-purple-600' :
+                                        page.category === 'Admin' ? 'bg-red-100 text-red-600' :
+                                        'bg-slate-100 text-slate-600'
+                                      }`}>
+                                        <Icon className="h-4 w-4" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <p className="text-sm font-medium text-slate-900 truncate">
+                                            {page.name}
+                                          </p>
+                                          <span className="text-xs text-slate-400 px-1.5 py-0.5 bg-slate-100 rounded">
+                                            {page.category}
+                                          </span>
+                                        </div>
+                                        <p className="text-xs text-slate-500 truncate mt-0.5">
+                                          {page.href}
+                                        </p>
+                                      </div>
+                                      {isSelected && (
+                                        <div className="text-xs text-slate-400 flex-shrink-0">
+                                          Enter ↵
+                                        </div>
+                                      )}
+                                    </Link>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Search Tips */}
+                        {!searchQuery.trim() && (
+                          <div className="p-4 border-t border-slate-100">
+                            <p className="text-xs text-slate-500 mb-2">Quick tips:</p>
+                            <div className="flex flex-wrap gap-2">
+                              {['dashboard', 'calendar', 'settings', 'profile'].map((tip) => (
+                                <button
+                                  key={tip}
+                                  onClick={() => setSearchQuery(tip)}
+                                  className="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors"
+                                >
+                                  {tip}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -356,31 +777,68 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
                   {/* Notifications */}
                   <div className="relative" ref={notificationsRef}>
                     <button
-                      onClick={() => setShowNotifications(!showNotifications)}
+                      onClick={() => {
+                        setShowNotifications(!showNotifications);
+                        // Refresh notifications when opening dropdown (handled by useEffect)
+                      }}
                       className="p-2 rounded-lg text-slate-600 hover:bg-teal-50 hover:text-teal-700 transition-colors relative"
                     >
                       <Bell className="h-5 w-5" />
-                      <span className="absolute top-1 right-1 h-2 w-2 bg-gradient-to-r from-orange-500 to-red-500 rounded-full animate-pulse shadow-lg"></span>
+                      {unreadCount > 0 && (
+                        <span className="absolute top-1 right-1 h-4 w-4 bg-gradient-to-r from-orange-500 to-red-500 rounded-full animate-pulse shadow-lg flex items-center justify-center">
+                          <span className="text-[10px] font-bold text-white">{unreadCount > 9 ? '9+' : unreadCount}</span>
+                        </span>
+                      )}
                     </button>
 
                     {showNotifications && (
-                      <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-teal-100 py-2">
-                        <div className="px-4 py-2 border-b border-slate-100">
+                      <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-teal-100 py-2 z-50 max-h-96 overflow-y-auto">
+                        <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
                           <h3 className="font-semibold text-sm text-slate-900">Notifications</h3>
+                          {unreadCount > 0 && (
+                            <span className="text-xs font-medium text-teal-600 bg-teal-50 px-2 py-1 rounded-full">
+                              {unreadCount} unread
+                            </span>
+                          )}
                         </div>
-                        {notifications.map((notif, idx) => (
-                          <div key={idx} className="px-4 py-3 hover:bg-teal-50 cursor-pointer border-b border-slate-50 last:border-0 transition-colors">
-                            <p className="text-sm text-slate-900">{notif.text}</p>
-                            <p className="text-xs text-teal-600 mt-1">{notif.time}</p>
+                        {loadingNotifications ? (
+                          <div className="px-4 py-8 text-center">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-teal-500 mx-auto"></div>
+                            <p className="text-xs text-slate-500 mt-2">Loading...</p>
                           </div>
-                        ))}
+                        ) : headerNotifications.length === 0 ? (
+                          <div className="px-4 py-8 text-center">
+                            <Bell className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+                            <p className="text-sm text-slate-500">No notifications</p>
+                            <p className="text-xs text-slate-400 mt-1">You're all caught up!</p>
+                          </div>
+                        ) : (
+                          <>
+                            {headerNotifications.map((notif) => (
+                              <Link
+                                key={notif.id}
+                                href={notif.action_url || '/notifications'}
+                                onClick={() => setShowNotifications(false)}
+                                className={`block px-4 py-3 hover:bg-teal-50 cursor-pointer border-b border-slate-50 last:border-0 transition-colors ${
+                                  !notif.is_read ? 'bg-teal-50/50' : ''
+                                }`}
+                              >
+                                <p className={`text-sm ${!notif.is_read ? 'font-semibold text-slate-900' : 'text-slate-700'}`}>
+                                  {notif.title}
+                                </p>
+                                <p className="text-xs text-slate-600 mt-1 line-clamp-1">{notif.message}</p>
+                                <p className="text-xs text-teal-600 mt-1">{getTimeAgo(notif.created_at)}</p>
+                              </Link>
+                            ))}
+                          </>
+                        )}
                         <div className="px-4 py-2 text-center border-t border-slate-100">
                           <Link
                             href="/notifications"
                             onClick={() => setShowNotifications(false)}
                             className="text-sm font-medium text-teal-700 hover:text-teal-800"
                           >
-                            View All
+                            View All Notifications
                           </Link>
                         </div>
                       </div>
@@ -399,13 +857,15 @@ const Header = ({ userRole = 'guest', user }: HeaderProps) => {
                     {showQuickActions && (
                       <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-teal-100 py-2">
                         {quickActions.map((action) => (
-                          <button
+                          <Link
                             key={action.name}
+                            href={action.href}
+                            onClick={() => setShowQuickActions(false)}
                             className="w-full flex items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-teal-50 hover:text-teal-700 transition-colors group"
                           >
                             <action.icon className="h-4 w-4 mr-3 text-teal-500 group-hover:text-teal-700" />
                             {action.name}
-                          </button>
+                          </Link>
                         ))}
                       </div>
                     )}

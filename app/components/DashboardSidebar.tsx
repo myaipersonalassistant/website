@@ -39,6 +39,8 @@ const navItems: NavItem[] = [
   { name: 'Email Insights', href: '/email-insights', icon: Mail },
   { name: 'Calendar', href: '/calendar', icon: Calendar },
   { name: 'Notifications', href: '/notifications', icon: Bell },
+  { name: 'Profile', href: '/profile', icon: User },
+  { name: 'Billing', href: '/billing', icon: CreditCard },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
@@ -82,18 +84,50 @@ export default function DashboardSidebar({ userName, userEmail }: DashboardSideb
   }, [user]);
 
   const fetchSubscription = async () => {
+    if (!user) return;
+    
     try {
       setLoadingSubscription(true);
-      // Mock data - replace with actual Firebase queries later
-      const mockSubscription: Subscription = {
-        planId: 'professional',
-        planName: 'Professional',
-        status: 'active',
-        billingCycle: 'monthly'
-      };
-      setSubscription(mockSubscription);
+      const db = getDb();
+      
+      // Try to get subscription from users/{uid}/subscription subcollection first
+      const subscriptionRef = doc(db, 'users', user.uid, 'subscription', 'current');
+      const subscriptionDoc = await getDoc(subscriptionRef);
+      
+      if (subscriptionDoc.exists()) {
+        const data = subscriptionDoc.data();
+        setSubscription({
+          planId: data.planId || data.plan_id || 'student',
+          planName: data.planName || data.plan_name || 'Student',
+          status: data.status || 'active',
+          billingCycle: data.billingCycle || data.billing_cycle || 'monthly'
+        });
+        return;
+      }
+      
+      // Fallback: Check if subscription is stored directly in user document
+      const userRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        if (userData.subscription) {
+          const subData = userData.subscription;
+          setSubscription({
+            planId: subData.planId || subData.plan_id || 'student',
+            planName: subData.planName || subData.plan_name || 'Student',
+            status: subData.status || 'active',
+            billingCycle: subData.billingCycle || subData.billing_cycle || 'monthly'
+          });
+          return;
+        }
+      }
+      
+      // If no subscription found, set to null (will show upgrade button)
+      setSubscription(null);
     } catch (error) {
       console.error('Error fetching subscription:', error);
+      setSubscription(null);
     } finally {
       setLoadingSubscription(false);
     }
@@ -119,7 +153,7 @@ export default function DashboardSidebar({ userName, userEmail }: DashboardSideb
       {/* Mobile Sidebar Toggle */}
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-white border border-slate-200 rounded-lg shadow-lg hover:bg-slate-50 transition-colors"
+        className="lg:hidden fixed top-4 left-4 z-[60] p-2 bg-white border border-slate-200 rounded-lg shadow-lg hover:bg-slate-50 transition-colors"
       >
         {sidebarOpen ? <PanelLeftClose className="h-5 w-5 text-slate-600" /> : <PanelLeft className="h-5 w-5 text-slate-600" />}
       </button>
@@ -127,27 +161,9 @@ export default function DashboardSidebar({ userName, userEmail }: DashboardSideb
       {/* Sidebar */}
       <div className={`${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-      } fixed lg:sticky top-0 left-0 h-screen w-64 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 z-40 lg:z-auto`}>
-        {/* Sidebar Header */}
-        <div className="p-4 sm:p-6 border-b border-slate-200 bg-gradient-to-br from-teal-50 to-cyan-50 flex-shrink-0">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-xl flex items-center justify-center shadow-lg">
-                <LayoutDashboard className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h2 className="font-bold text-base text-slate-900">MAI-PA</h2>
-                <p className="text-[11px] text-slate-500">Navigation</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="lg:hidden p-2 rounded-lg hover:bg-slate-100 transition-colors"
-            >
-              <X className="h-5 w-5 text-slate-600" />
-            </button>
-          </div>
-        </div>
+      } fixed lg:sticky top-0 left-0 h-screen w-64 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 z-[55] lg:z-auto`}>
+        {/* Mobile Header Spacer - ensures content doesn't get covered by fixed header */}
+        <div className="lg:hidden h-16 flex-shrink-0"></div>
 
         {/* Navigation Items */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
@@ -169,80 +185,51 @@ export default function DashboardSidebar({ userName, userEmail }: DashboardSideb
                     : 'hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-700'
                 }`}
               >
-                <Icon className={`h-5 w-5 flex-shrink-0 ${isActive ? 'text-teal-600' : 'text-slate-500 group-hover:text-teal-600'}`} />
-                <span className="text-xs font-medium flex-1">{item.name}</span>
-                {isActive && <ChevronRight className="h-4 w-4 text-teal-600 flex-shrink-0" />}
+                <Icon className={`h-4 w-4 flex-shrink-0 ${isActive ? 'text-teal-600' : 'text-slate-500 group-hover:text-teal-600'}`} />
+                <span className="text-[11px] font-medium flex-1">{item.name}</span>
+                {isActive && <ChevronRight className="h-3 w-3 text-teal-600 flex-shrink-0" />}
               </Link>
             );
           })}
         </nav>
 
-        {/* User Profile & Subscription */}
-        <div className="p-4 sm:p-6 border-t border-slate-200 bg-white flex-shrink-0 space-y-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-full flex items-center justify-center flex-shrink-0 shadow-md">
-              <User className="h-5 w-5 text-white" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-slate-800 truncate">{userName || 'User'}</p>
-              {userEmail && (
-                <p className="text-[11px] text-slate-500 truncate">{userEmail}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Subscription Info */}
-          {subscription && !loadingSubscription ? (
-            <div className="p-3 bg-gradient-to-br from-teal-50 to-cyan-50 border-2 border-teal-200 rounded-xl">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <div className={`p-1.5 bg-gradient-to-br ${planColors[subscription.planId]} rounded-lg text-white`}>
-                    {planIcons[subscription.planId]}
+        {/* User Profile */}
+        <div className="p-3 sm:p-4 border-t border-slate-200 bg-white flex-shrink-0">
+          <Link href="/profile" className="block group" tabIndex={0}>
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 transition-all duration-150 group-hover:bg-slate-50 rounded-lg p-1.5 -m-1.5">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-full flex items-center justify-center flex-shrink-0 shadow-md">
+                <User className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-medium text-slate-800 truncate">{userName || 'User'}</p>
+                {userEmail && (
+                  <p className="text-[10px] text-slate-500 truncate">{userEmail}</p>
+                )}
+                {/* Subscription Status Badge */}
+                {subscription && !loadingSubscription && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <div className={`px-1.5 py-0.5 rounded-lg text-[9px] font-medium border ${getStatusColor(subscription.status)}`}>
+                      {subscription.planName}
+                    </div>
+                    {subscription.status === 'active' ? (
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
+                    ) : subscription.status === 'past_due' ? (
+                      <div className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse"></div>
+                    ) : (
+                      <div className="w-1.5 h-1.5 bg-slate-400 rounded-full"></div>
+                    )}
                   </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-900">{subscription.planName}</p>
-                    <p className="text-[10px] text-slate-600 capitalize">
-                      {subscription.billingCycle}
-                    </p>
-                  </div>
-                </div>
-                {subscription.status === 'active' ? (
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                ) : subscription.status === 'past_due' ? (
-                  <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
-                ) : (
-                  <div className="w-2 h-2 bg-slate-400 rounded-full"></div>
                 )}
               </div>
-              <Link
-                href="/billing"
-                className="flex items-center gap-1.5 text-[11px] font-medium text-teal-700 hover:text-teal-800 transition-colors group"
-              >
-                <CreditCard className="h-3 w-3" />
-                <span>Manage Billing</span>
-                <ArrowRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </Link>
             </div>
-          ) : !loadingSubscription ? (
-            <Link
-              href="/pricing"
-              className="flex items-center justify-center gap-2 p-3 bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 text-white rounded-xl text-xs font-semibold transition-all shadow-md hover:shadow-lg active:scale-95"
-            >
-              <Crown className="h-4 w-4" />
-              <span>Upgrade Plan</span>
-            </Link>
-          ) : (
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl animate-pulse">
-              <div className="h-10 bg-slate-200 rounded"></div>
-            </div>
-          )}
+          </Link>
         </div>
       </div>
 
       {/* Mobile Overlay */}
       {sidebarOpen && (
         <div
-          className="lg:hidden fixed inset-0 bg-black/50 z-30"
+          className="lg:hidden fixed inset-0 bg-black/50 z-[45]"
           onClick={() => setSidebarOpen(false)}
         ></div>
       )}

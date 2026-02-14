@@ -1,6 +1,7 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import { getAnalytics, Analytics, isSupported } from 'firebase/analytics';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -15,6 +16,7 @@ const firebaseConfig = {
 let app: FirebaseApp | null = null;
 let authInstance: Auth | null = null;
 let dbInstance: Firestore | null = null;
+let analyticsInstance: Analytics | null = null;
 
 function initializeFirebase(): void {
   // Only initialize on the client side
@@ -33,13 +35,26 @@ function initializeFirebase(): void {
   }
 
   try {
-    if (getApps().length === 0) {
-      app = initializeApp(firebaseConfig);
-    } else {
-      app = getApps()[0];
-    }
+if (getApps().length === 0) {
+  app = initializeApp(firebaseConfig);
+} else {
+  app = getApps()[0];
+}
     authInstance = getAuth(app);
     dbInstance = getFirestore(app);
+    
+    // Initialize Analytics if supported
+    if (typeof window !== 'undefined' && app) {
+      isSupported().then((supported) => {
+        if (supported && app) {
+          try {
+            analyticsInstance = getAnalytics(app);
+          } catch (error) {
+            console.error('Error initializing Firebase Analytics:', error);
+          }
+        }
+      });
+    }
   } catch (error) {
     // Silently fail during build/SSR
     if (typeof window !== 'undefined') {
@@ -167,6 +182,20 @@ export function getDb(): Firestore {
     throw new Error('Firebase Firestore is not initialized. Please check your environment variables.');
   }
   return instance;
+}
+
+export async function getAuthToken(): Promise<string> {
+  const instance = getAuthInstance();
+  if (!instance || !instance.currentUser) {
+    throw new Error('User is not authenticated');
+  }
+  return await instance.currentUser.getIdToken();
+}
+
+export function getAnalyticsInstance(): Analytics | null {
+  if (typeof window === 'undefined') return null;
+  initializeFirebase();
+  return analyticsInstance;
 }
 
 export default getApp;

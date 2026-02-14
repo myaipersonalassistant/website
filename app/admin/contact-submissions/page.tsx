@@ -14,7 +14,6 @@ import {
   MessageSquare,
   Star,
   AlertCircle,
-  ArrowLeft,
   User,
   Calendar,
   FileText,
@@ -24,10 +23,12 @@ import {
   ChevronUp,
   Plus
 } from 'lucide-react';
-import { db } from '@/lib/firebase';
-import { collection, query, orderBy, getDocs, doc, updateDoc, deleteDoc, Timestamp, serverTimestamp } from 'firebase/firestore';
+import { getDb } from '@/lib/firebase';
+import { collection, query, orderBy, getDocs, doc, updateDoc, deleteDoc, Timestamp, serverTimestamp, getDoc } from 'firebase/firestore';
 import { useAuth } from '@/lib/useAuth';
 import { formatDistanceToNow } from 'date-fns';
+import AdminSidebar from '@/app/components/AdminSidebar';
+import Header from '@/app/components/Header';
 
 interface ContactSubmission {
   id: string;
@@ -63,16 +64,57 @@ export default function ContactSubmissionsPage() {
   const loadSubmissions = useCallback(async () => {
     try {
       setLoading(true);
-      const q = query(collection(db, 'contact_submissions'), orderBy('createdAt', 'desc'));
-      const querySnapshot = await getDocs(q);
-      const submissionsData: ContactSubmission[] = [];
+      const db = getDb();
       
-      querySnapshot.forEach((doc) => {
-        submissionsData.push({
-          id: doc.id,
-          ...doc.data()
-        } as ContactSubmission);
-      });
+      let submissionsData: ContactSubmission[] = [];
+      
+      try {
+        // Try with orderBy first (requires index)
+        const q = query(collection(db, 'contact_submissions'), orderBy('createdAt', 'desc'));
+        const querySnapshot = await getDocs(q);
+        
+        querySnapshot.forEach((doc) => {
+          submissionsData.push({
+            id: doc.id,
+            ...doc.data()
+          } as ContactSubmission);
+        });
+      } catch (err: any) {
+        // Fallback: fetch all and sort client-side if index is missing
+        if (err.code === 'failed-precondition') {
+          const allSubmissionsQuery = query(collection(db, 'contact_submissions'));
+          const allSubmissionsSnapshot = await getDocs(allSubmissionsQuery);
+          
+          allSubmissionsSnapshot.forEach((doc) => {
+            submissionsData.push({
+              id: doc.id,
+              ...doc.data()
+            } as ContactSubmission);
+          });
+          
+          // Sort by createdAt descending (newest first)
+          submissionsData.sort((a, b) => {
+            const aDate = a.createdAt instanceof Timestamp ? a.createdAt.toMillis() : new Date(a.createdAt).getTime();
+            const bDate = b.createdAt instanceof Timestamp ? b.createdAt.toMillis() : new Date(b.createdAt).getTime();
+            return bDate - aDate;
+          });
+          
+          // Show alert with index creation URL
+          const indexUrl = err.message?.includes('index') 
+            ? err.message.match(/https:\/\/[^\s]+/)?.[0]
+            : null;
+          if (indexUrl) {
+            console.warn('Firestore index required. Create it at:', indexUrl);
+            // Optionally show a one-time alert to admin
+            if (typeof window !== 'undefined' && !sessionStorage.getItem('contact_submissions_index_alert_shown')) {
+              alert(`Firestore index required for contact submissions. Please create it:\n\n${indexUrl}\n\nThis alert will only show once.`);
+              sessionStorage.setItem('contact_submissions_index_alert_shown', 'true');
+            }
+          }
+        } else {
+          throw err;
+        }
+      }
 
       setSubmissions(submissionsData);
     } catch (error) {
@@ -88,13 +130,32 @@ export default function ContactSubmissionsPage() {
         router.push('/auth?view=login');
         return;
       }
-      // In production, check if user is admin
-      loadSubmissions();
+      checkAdminAccess();
     }
-  }, [authLoading, isAuthenticated, router, loadSubmissions]);
+  }, [authLoading, isAuthenticated, router]);
+
+  const checkAdminAccess = async () => {
+    if (!user) return;
+    
+    try {
+      const db = getDb();
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      
+      if (!userDoc.exists() || userDoc.data().role !== 'admin') {
+        router.push('/dashboard');
+        return;
+      }
+      
+      loadSubmissions();
+    } catch (error) {
+      console.error('Error checking admin access:', error);
+      router.push('/dashboard');
+    }
+  };
 
   const handleStatusChange = async (submissionId: string, newStatus: ContactSubmission['status']) => {
     try {
+      const db = getDb();
       await updateDoc(doc(db, 'contact_submissions', submissionId), {
         status: newStatus,
         updatedAt: serverTimestamp()
@@ -110,6 +171,7 @@ export default function ContactSubmissionsPage() {
 
   const handleMarkAsRead = async (submissionId: string, read: boolean) => {
     try {
+      const db = getDb();
       await updateDoc(doc(db, 'contact_submissions', submissionId), {
         read: read,
         updatedAt: serverTimestamp()
@@ -146,6 +208,7 @@ export default function ContactSubmissionsPage() {
         createdAt: now
       };
 
+      const db = getDb();
       await updateDoc(doc(db, 'contact_submissions', selectedSubmission.id), {
         adminNotes: [...currentNotes, firestoreNote],
         updatedAt: serverTimestamp()
@@ -168,6 +231,7 @@ export default function ContactSubmissionsPage() {
     if (!confirm('Are you sure you want to delete this submission?')) return;
 
     try {
+      const db = getDb();
       await deleteDoc(doc(db, 'contact_submissions', submissionId));
       loadSubmissions();
       if (selectedSubmission?.id === submissionId) {
@@ -194,11 +258,12 @@ export default function ContactSubmissionsPage() {
   const unreadCount = submissions.filter(s => !s.read).length;
   const newCount = submissions.filter(s => s.status === 'new').length;
 
-  if (authLoading || loading) {
+  // Only show full-page loading during auth check
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
-          <RefreshCw className="h-12 w-12 text-teal-600 animate-spin mx-auto mb-4" />
+          <div className="w-12 h-12 border-4 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-slate-600">Loading...</p>
         </div>
       </div>
@@ -206,74 +271,76 @@ export default function ContactSubmissionsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link
-                href="/admin"
-                className="inline-flex items-center gap-2 text-slate-600 hover:text-teal-600 transition-colors"
-              >
-                <ArrowLeft className="h-5 w-5" />
-                <span>Back to Admin</span>
-              </Link>
-              <div>
-                <h1 className="text-2xl font-bold text-slate-900">Contact Submissions</h1>
-                <p className="text-sm text-slate-600">Manage and respond to customer inquiries</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+      <Header userRole="admin" user={user} />
+      <div className="flex -mt-16">
+        <AdminSidebar />
+        <div className="flex-1 lg:ml-0">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            {loading ? (
+              <div className="flex items-center justify-center min-h-[60vh]">
+                <div className="text-center">
+                  <div className="w-12 h-12 border-4 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                  <p className="text-slate-600">Loading submissions...</p>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-700 rounded-xl">
-                <AlertCircle className="h-4 w-4" />
-                <span className="font-semibold">{unreadCount} Unread</span>
-              </div>
-              <div className="flex items-center gap-2 px-4 py-2 bg-teal-50 text-teal-700 rounded-xl">
-                <Mail className="h-4 w-4" />
-                <span className="font-semibold">{newCount} New</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+            ) : (
+              <>
+                {/* Header */}
+                <div className="mb-8">
+                  <div className="flex items-center justify-between flex-wrap gap-4">
+                    <div>
+                      <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">Contact Submissions</h1>
+                      <p className="text-sm text-slate-600">Manage and respond to customer inquiries</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 rounded-xl border-2 border-red-200">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        <span className="font-semibold text-xs">{unreadCount} Unread</span>
+                      </div>
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-teal-50 text-teal-700 rounded-xl border-2 border-teal-200">
+                        <Mail className="h-3.5 w-3.5" />
+                        <span className="font-semibold text-xs">{newCount} New</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid lg:grid-cols-3 gap-6">
+                <div className="grid lg:grid-cols-3 gap-6">
           {/* Submissions List */}
           <div className="lg:col-span-1 space-y-4">
             {/* Search and Filters */}
             <div className="bg-white rounded-2xl shadow-lg border-2 border-slate-200 p-4">
               <div className="relative mb-4">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Search submissions..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                  className="w-full pl-9 pr-4 py-2 text-sm border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
                 />
               </div>
 
               <button
                 onClick={() => setShowFilters(!showFilters)}
-                className="w-full flex items-center justify-between px-4 py-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-sm bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
               >
                 <span className="flex items-center gap-2">
-                  <Filter className="h-4 w-4" />
+                  <Filter className="h-3.5 w-3.5" />
                   Filters
                 </span>
-                {showFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {showFilters ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               </button>
 
               {showFilters && (
                 <div className="mt-4 space-y-3 pt-4 border-t border-slate-200">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Status</label>
+                    <label className="block text-xs font-medium text-slate-700 mb-1.5">Status</label>
                     <select
                       value={statusFilter}
                       onChange={(e) => setStatusFilter(e.target.value)}
-                      className="w-full px-3 py-2 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500"
+                      className="w-full px-3 py-2 text-sm border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500"
                     >
                       <option value="all">All Status</option>
                       <option value="new">New</option>
@@ -283,11 +350,11 @@ export default function ContactSubmissionsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Priority</label>
+                    <label className="block text-xs font-medium text-slate-700 mb-1.5">Priority</label>
                     <select
                       value={priorityFilter}
                       onChange={(e) => setPriorityFilter(e.target.value)}
-                      className="w-full px-3 py-2 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500"
+                      className="w-full px-3 py-2 text-sm border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500"
                     >
                       <option value="all">All Priorities</option>
                       <option value="high">High</option>
@@ -303,8 +370,8 @@ export default function ContactSubmissionsPage() {
             <div className="bg-white rounded-2xl shadow-lg border-2 border-slate-200 max-h-[calc(100vh-300px)] overflow-y-auto">
               {filteredSubmissions.length === 0 ? (
                 <div className="p-8 text-center">
-                  <Mail className="h-12 w-12 text-slate-300 mx-auto mb-4" />
-                  <p className="text-slate-600">No submissions found</p>
+                  <Mail className="h-10 w-10 text-slate-300 mx-auto mb-4" />
+                  <p className="text-xs text-slate-600">No submissions found</p>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-200">
@@ -323,35 +390,35 @@ export default function ContactSubmissionsPage() {
                             handleMarkAsRead(submission.id, true);
                           }
                         }}
-                        className={`w-full p-4 text-left hover:bg-slate-50 transition-colors ${
+                        className={`w-full p-3 text-left hover:bg-slate-50 transition-colors ${
                           selectedSubmission?.id === submission.id ? 'bg-teal-50 border-l-4 border-teal-500' : ''
                         } ${!submission.read ? 'bg-blue-50/50' : ''}`}
                       >
-                        <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-start justify-between mb-1.5">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
-                              <h3 className="font-semibold text-slate-900 truncate">{submission.name}</h3>
+                              <h3 className="text-xs font-semibold text-slate-900 truncate">{submission.name}</h3>
                               {!submission.read && (
-                                <span className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0"></span>
+                                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0"></span>
                               )}
                             </div>
-                            <p className="text-sm text-slate-600 truncate">{submission.email}</p>
+                            <p className="text-xs text-slate-600 truncate">{submission.email}</p>
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
                             {submission.priority === 'high' && (
-                              <Star className="h-4 w-4 text-orange-500 fill-orange-500" />
+                              <Star className="h-3.5 w-3.5 text-orange-500 fill-orange-500" />
                             )}
                             {submission.status === 'new' && (
-                              <span className="px-2 py-0.5 bg-teal-100 text-teal-700 text-xs font-medium rounded-full">
+                              <span className="px-1.5 py-0.5 bg-teal-100 text-teal-700 text-[10px] font-medium rounded-full">
                                 New
                               </span>
                             )}
                           </div>
                         </div>
-                        <p className="text-sm font-medium text-slate-900 mb-1 truncate">{submission.subject}</p>
-                        <p className="text-xs text-slate-500 line-clamp-2">{submission.message}</p>
-                        <div className="flex items-center gap-2 mt-2 text-xs text-slate-500">
-                          <Clock className="h-3 w-3" />
+                        <p className="text-xs font-medium text-slate-900 mb-1 truncate">{submission.subject}</p>
+                        <p className="text-[10px] text-slate-500 line-clamp-2">{submission.message}</p>
+                        <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-slate-500">
+                          <Clock className="h-2.5 w-2.5" />
                           <span>{timeAgo}</span>
                         </div>
                       </button>
@@ -367,12 +434,12 @@ export default function ContactSubmissionsPage() {
             {selectedSubmission ? (
               <div className="bg-white rounded-2xl shadow-lg border-2 border-slate-200">
                 {/* Header */}
-                <div className="p-6 border-b border-slate-200">
-                  <div className="flex items-start justify-between mb-4">
+                <div className="p-5 border-b border-slate-200">
+                  <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h2 className="text-2xl font-bold text-slate-900">{selectedSubmission.subject}</h2>
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                      <div className="flex items-center gap-2 mb-2">
+                        <h2 className="text-lg font-bold text-slate-900">{selectedSubmission.subject}</h2>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
                           selectedSubmission.priority === 'high' 
                             ? 'bg-orange-100 text-orange-700'
                             : selectedSubmission.priority === 'normal'
@@ -381,7 +448,7 @@ export default function ContactSubmissionsPage() {
                         }`}>
                           {selectedSubmission.priority}
                         </span>
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
                           selectedSubmission.status === 'new'
                             ? 'bg-teal-100 text-teal-700'
                             : selectedSubmission.status === 'in_progress'
@@ -393,17 +460,17 @@ export default function ContactSubmissionsPage() {
                           {selectedSubmission.status.replace('_', ' ')}
                         </span>
                       </div>
-                      <div className="flex items-center gap-4 text-sm text-slate-600">
+                      <div className="flex items-center gap-3 text-xs text-slate-600">
                         <span className="flex items-center gap-1">
-                          <User className="h-4 w-4" />
+                          <User className="h-3.5 w-3.5" />
                           {selectedSubmission.name}
                         </span>
                         <span className="flex items-center gap-1">
-                          <Mail className="h-4 w-4" />
+                          <Mail className="h-3.5 w-3.5" />
                           {selectedSubmission.email}
                         </span>
                         <span className="flex items-center gap-1">
-                          <Calendar className="h-4 w-4" />
+                          <Calendar className="h-3.5 w-3.5" />
                           {formatDistanceToNow(
                             selectedSubmission.createdAt instanceof Timestamp 
                               ? selectedSubmission.createdAt.toDate() 
@@ -415,12 +482,12 @@ export default function ContactSubmissionsPage() {
                     </div>
                     <button
                       onClick={() => handleMarkAsRead(selectedSubmission.id, !selectedSubmission.read)}
-                      className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                      className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
                     >
                       {selectedSubmission.read ? (
-                        <EyeOff className="h-5 w-5 text-slate-400" />
+                        <EyeOff className="h-4 w-4 text-slate-400" />
                       ) : (
-                        <Eye className="h-5 w-5 text-teal-600" />
+                        <Eye className="h-4 w-4 text-teal-600" />
                       )}
                     </button>
                   </div>
@@ -430,7 +497,7 @@ export default function ContactSubmissionsPage() {
                     <select
                       value={selectedSubmission.status}
                       onChange={(e) => handleStatusChange(selectedSubmission.id, e.target.value as ContactSubmission['status'])}
-                      className="px-4 py-2 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500 text-sm"
+                      className="px-3 py-1.5 text-xs border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500"
                     >
                       <option value="new">New</option>
                       <option value="in_progress">In Progress</option>
@@ -439,61 +506,61 @@ export default function ContactSubmissionsPage() {
                     </select>
                     <a
                       href={`mailto:${selectedSubmission.email}?subject=Re: ${selectedSubmission.subject}`}
-                      className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 transition-colors text-sm"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-teal-600 text-white rounded-xl hover:bg-teal-700 transition-colors"
                     >
-                      <Send className="h-4 w-4" />
+                      <Send className="h-3.5 w-3.5" />
                       Reply
                     </a>
                     <button
                       onClick={() => handleDelete(selectedSubmission.id)}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors text-sm"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-3.5 w-3.5" />
                       Delete
                     </button>
                   </div>
                 </div>
 
                 {/* Message Content */}
-                <div className="p-6 border-b border-slate-200">
-                  <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
-                    <FileText className="h-5 w-5" />
+                <div className="p-5 border-b border-slate-200">
+                  <h3 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
                     Message
                   </h3>
-                  <div className="bg-slate-50 rounded-xl p-4 text-slate-700 whitespace-pre-wrap leading-relaxed">
+                  <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">
                     {selectedSubmission.message}
                   </div>
                 </div>
 
                 {/* Admin Notes */}
-                <div className="p-6">
-                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                    <MessageSquare className="h-5 w-5" />
+                <div className="p-5">
+                  <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
                     Admin Notes
                     {selectedSubmission.adminNotes && (
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-full">
+                      <span className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded-full">
                         {selectedSubmission.adminNotes.length}
                       </span>
                     )}
                   </h3>
 
                   {selectedSubmission.adminNotes && selectedSubmission.adminNotes.length > 0 && (
-                    <div className="space-y-3 mb-4">
+                    <div className="space-y-2 mb-3">
                       {selectedSubmission.adminNotes.map((note, index) => {
                         const noteDate = note.createdAt instanceof Timestamp 
                           ? note.createdAt.toDate() 
                           : new Date(note.createdAt);
                         return (
-                          <div key={index} className="bg-slate-50 rounded-xl p-4 border-l-4 border-teal-500">
-                            <div className="flex items-start justify-between mb-2">
+                          <div key={index} className="bg-slate-50 rounded-xl p-3 border-l-4 border-teal-500">
+                            <div className="flex items-start justify-between mb-1.5">
                               <div>
-                                <p className="font-medium text-slate-900">{note.adminName}</p>
-                                <p className="text-xs text-slate-500">
+                                <p className="text-xs font-medium text-slate-900">{note.adminName}</p>
+                                <p className="text-[10px] text-slate-500">
                                   {formatDistanceToNow(noteDate, { addSuffix: true })}
                                 </p>
                               </div>
                             </div>
-                            <p className="text-slate-700">{note.note}</p>
+                            <p className="text-xs text-slate-700">{note.note}</p>
                           </div>
                         );
                       })}
@@ -505,25 +572,29 @@ export default function ContactSubmissionsPage() {
                       value={noteText}
                       onChange={(e) => setNoteText(e.target.value)}
                       placeholder="Add a note..."
-                      className="flex-1 px-4 py-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-teal-500 resize-none"
+                      className="flex-1 px-3 py-2 text-xs border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-teal-500 resize-none"
                       rows={3}
                     />
                     <button
                       onClick={handleAddNote}
                       disabled={!noteText.trim()}
-                      className="px-6 py-3 bg-teal-600 text-white rounded-xl hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed self-end"
+                      className="px-4 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed self-end"
                     >
-                      <Plus className="h-5 w-5" />
+                      <Plus className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
               </div>
             ) : (
               <div className="bg-white rounded-2xl shadow-lg border-2 border-slate-200 p-12 text-center">
-                <Mail className="h-16 w-16 text-slate-300 mx-auto mb-4" />
-                <h3 className="text-xl font-bold text-slate-900 mb-2">Select a submission</h3>
-                <p className="text-slate-600">Choose a submission from the list to view details and take action</p>
+                <Mail className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+                <h3 className="text-lg font-bold text-slate-900 mb-2">Select a submission</h3>
+                <p className="text-sm text-slate-600">Choose a submission from the list to view details and take action</p>
               </div>
+            )}
+          </div>
+                </div>
+              </>
             )}
           </div>
         </div>

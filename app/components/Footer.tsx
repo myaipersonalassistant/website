@@ -220,10 +220,10 @@ const Footer: React.FC<FooterProps> = ({ userRole = 'guest' }) => {
   // Dashboard Footer (Authenticated User)
   const DashboardFooter = () => (
     <footer className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-t border-slate-700">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex flex-col md:flex-row justify-between items-center space-y-3 md:space-y-0">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+        <div className="flex flex-col md:flex-row justify-between items-center space-y-3 md:space-y-0 gap-4">
           {/* Left Side */}
-          <div className="flex items-center space-x-6 text-sm">
+          <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs sm:text-sm">
             <span className="text-slate-400">© {currentYear} MAI-PA</span>
             <Link href="/privacy" className="text-slate-300 hover:text-teal-400 transition-colors flex items-center">
               <Shield className="h-3.5 w-3.5 mr-1.5 text-teal-400" />
@@ -233,22 +233,32 @@ const Footer: React.FC<FooterProps> = ({ userRole = 'guest' }) => {
               <FileText className="h-3.5 w-3.5 mr-1.5 text-teal-400" />
               Terms
             </Link>
+            {isAdmin && (
+              <Link href="/admin" className="text-slate-300 hover:text-teal-400 transition-colors flex items-center">
+                <Activity className="h-3.5 w-3.5 mr-1.5 text-teal-400" />
+                Admin
+              </Link>
+            )}
           </div>
 
           {/* Center */}
-          <div className="flex items-center space-x-2 px-4 py-2 bg-teal-900/30 border border-teal-700/50 rounded-lg hover:bg-teal-900/50 transition-colors cursor-pointer group">
-            <Link href="/contact" className="flex flex-row text-sm text-teal-300 group-hover:text-teal-200 transition-colors font-medium self-center">
-              <HelpCircle className="h-4 w-4 mr-1.5 text-teal-400 self-center" />
-              Need Help? Chat with us
+          <div className="flex items-center space-x-2 px-3 sm:px-4 py-2 bg-teal-900/30 border border-teal-700/50 rounded-lg hover:bg-teal-900/50 transition-colors cursor-pointer group">
+            <Link href="/contact" className="flex flex-row text-xs sm:text-sm text-teal-300 group-hover:text-teal-200 transition-colors font-medium self-center">
+              <HelpCircle className="h-3.5 w-4 sm:h-4 sm:w-4 mr-1.5 text-teal-400 self-center" />
+              <span className="hidden sm:inline">Need Help? Chat with us</span>
+              <span className="sm:hidden">Help</span>
             </Link>
           </div>
 
           {/* Right Side */}
-          <div className="flex items-center space-x-6 text-sm">
-            <span className="px-2 py-1 bg-teal-900/50 border border-teal-700/30 text-teal-300 rounded text-xs font-medium">v1.0.0</span>
+          <div className="flex items-center space-x-4 sm:space-x-6 text-xs sm:text-sm">
+            <span className="px-2 py-1 bg-teal-900/50 border border-teal-700/30 text-teal-300 rounded text-[10px] sm:text-xs font-medium">v1.0.0</span>
+            {isAdmin && (
+              <span className="px-2 py-1 bg-red-900/50 border border-red-700/30 text-red-300 rounded text-[10px] sm:text-xs font-medium">Admin</span>
+            )}
             <button className="flex items-center space-x-2 text-slate-300 hover:text-teal-400 transition-colors">
-              <Globe className="h-4 w-4 text-teal-400" />
-              <span>English</span>
+              <Globe className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-teal-400" />
+              <span className="hidden sm:inline">English</span>
             </button>
           </div>
         </div>
@@ -257,10 +267,10 @@ const Footer: React.FC<FooterProps> = ({ userRole = 'guest' }) => {
   );
 
   // Render appropriate footer based on userRole
-  if (isAdmin) {
+  // MarketingFooter: For unauthenticated guests (public pages)
+  // DashboardFooter: For authenticated users (both regular users and admins)
+  if (isAuthenticated) {
     return <DashboardFooter />;
-  } else if (isAuthenticated) {
-    return <MarketingFooter />;
   } else {
     return <MarketingFooter />;
   }

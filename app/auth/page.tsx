@@ -17,7 +17,7 @@ import {
   onAuthStateChanged,
   User as FirebaseUser
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, collection, addDoc, Timestamp } from 'firebase/firestore';
 
 type AuthView = 'login' | 'signup' | 'forgot-password' | 'verify-email' | 'reset-password';
 
@@ -95,16 +95,8 @@ export default function AuthPage() {
     setError('');
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      // Check onboarding status and redirect accordingly
-      const hasCompletedOnboarding = await checkOnboardingStatus(user.uid);
-      if (hasCompletedOnboarding) {
-        navigate.push('/dashboard');
-      } else {
-        navigate.push('/onboarding');
-      }
+      await signInWithEmailAndPassword(auth, email, password);
+      // onAuthStateChanged will handle the redirect
     } catch (err: any) {
       let errorMessage = 'Failed to sign in. Please check your credentials.';
       if (err.code === 'auth/user-not-found') {
@@ -146,8 +138,10 @@ export default function AuthPage() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
+      const db = getDb();
+      
       // Create user document in Firestore with initial data
-      await setDoc(doc(getDb(), 'users', user.uid), {
+      await setDoc(doc(db, 'users', user.uid), {
         email: user.email,
         fullName: fullName,
         createdAt: serverTimestamp(),
@@ -158,9 +152,27 @@ export default function AuthPage() {
           signupDate: new Date().toISOString(),
         }
       });
-
-      // Always redirect to onboarding after signup
-      navigate.push('/onboarding');
+      
+      // Create welcome notification
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          userId: user.uid,
+          title: 'Welcome to Mai-PA! 🎉',
+          message: `Hi ${fullName || 'there'}! We're excited to have you on board. Complete your onboarding to get started with your AI assistant.`,
+          type: 'success',
+          category: 'system',
+          priority: 'medium',
+          is_read: false,
+          is_archived: false,
+          action_url: '/onboarding',
+          created_at: serverTimestamp(),
+        });
+      } catch (notificationError) {
+        // Don't fail signup if notification creation fails
+        console.error('Error creating welcome notification:', notificationError);
+      }
+      
+      // onAuthStateChanged will handle the redirect
     } catch (err: any) {
       let errorMessage = 'Failed to create account. Please try again.';
       if (err.code === 'auth/email-already-in-use') {
@@ -277,16 +289,27 @@ export default function AuthPage() {
             signupDate: new Date().toISOString(),
           }
         });
-        navigate.push('/onboarding');
-      } else {
-        // Check onboarding status
-        const hasCompletedOnboarding = await checkOnboardingStatus(user.uid);
-        if (hasCompletedOnboarding) {
-          navigate.push('/dashboard');
-        } else {
-          navigate.push('/onboarding');
+        
+        // Create welcome notification for Google signup
+        try {
+          await addDoc(collection(dbInstance, 'notifications'), {
+            userId: user.uid,
+            title: 'Welcome to Mai-PA! 🎉',
+            message: `Hi ${user.displayName || user.email?.split('@')[0] || 'there'}! We're excited to have you on board. Complete your onboarding to get started with your AI assistant.`,
+            type: 'success',
+            category: 'system',
+            priority: 'medium',
+            is_read: false,
+            is_archived: false,
+            action_url: '/onboarding',
+            created_at: serverTimestamp(),
+          });
+        } catch (notificationError) {
+          // Don't fail signup if notification creation fails
+          console.error('Error creating welcome notification:', notificationError);
         }
       }
+      // onAuthStateChanged will handle the redirect
     } catch (err: any) {
       let errorMessage = 'Failed to sign in with Google. Please try again.';
       if (err.code === 'auth/popup-closed-by-user') {
@@ -307,45 +330,108 @@ export default function AuthPage() {
     setError('');
     try {
       const provider = new OAuthProvider('apple.com');
+      // Apple Sign-In scopes - email is required, name is optional
       provider.addScope('email');
       provider.addScope('name');
       
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
+      
+      // Apple Sign-In may provide name in user.displayName (only on first sign-in)
+      // Extract name from user object
+      let fullName = user.displayName || '';
 
       // Check if user document exists, if not create it
       const dbInstance = getDb();
       const userDoc = await getDoc(doc(dbInstance, 'users', user.uid));
+      
       if (!userDoc.exists()) {
-        await setDoc(doc(dbInstance, 'users', user.uid), {
-          email: user.email,
-          fullName: user.displayName || '',
+        // For new users, create document
+        // Note: Apple may not provide email/name on subsequent sign-ins
+        const userData: any = {
           createdAt: serverTimestamp(),
           onboardingCompleted: false,
           metadata: {
             signupMethod: 'apple',
             signupDate: new Date().toISOString(),
           }
-        });
-        navigate.push('/onboarding');
+        };
+        
+        // Only add email if provided (Apple may hide email)
+        if (user.email) {
+          userData.email = user.email;
+        }
+        
+        // Only add fullName if provided
+        if (fullName) {
+          userData.fullName = fullName;
+        } else if (user.email) {
+          // Fallback: use email username part if no name
+          userData.fullName = user.email.split('@')[0];
+        }
+        
+        await setDoc(doc(dbInstance, 'users', user.uid), userData);
+        
+        // Create welcome notification for Apple signup
+        try {
+          const userName = fullName || user.email?.split('@')[0] || 'there';
+          await addDoc(collection(dbInstance, 'notifications'), {
+            userId: user.uid,
+            title: 'Welcome to Mai-PA! 🎉',
+            message: `Hi ${userName}! We're excited to have you on board. Complete your onboarding to get started with your AI assistant.`,
+            type: 'success',
+            category: 'system',
+            priority: 'medium',
+            is_read: false,
+            is_archived: false,
+            action_url: '/onboarding',
+            created_at: serverTimestamp(),
+          });
+        } catch (notificationError) {
+          // Don't fail signup if notification creation fails
+          console.error('Error creating welcome notification:', notificationError);
+        }
       } else {
-        // Check onboarding status
-        const hasCompletedOnboarding = await checkOnboardingStatus(user.uid);
-        if (hasCompletedOnboarding) {
-          navigate.push('/dashboard');
-        } else {
-          navigate.push('/onboarding');
+        // For existing users, update email/name if missing and now provided
+        const existingData = userDoc.data();
+        const updates: any = {};
+        
+        if (user.email && !existingData.email) {
+          updates.email = user.email;
+        }
+        
+        if (fullName && !existingData.fullName) {
+          updates.fullName = fullName;
+        }
+        
+        if (Object.keys(updates).length > 0) {
+          await setDoc(doc(dbInstance, 'users', user.uid), updates, { merge: true });
         }
       }
+      // onAuthStateChanged will handle the redirect
     } catch (err: any) {
       let errorMessage = 'Failed to sign in with Apple. Please try again.';
+      
+      // Handle specific Apple Sign-In errors
       if (err.code === 'auth/popup-closed-by-user') {
-        errorMessage = 'Sign-in popup was closed. Please try again.';
+        errorMessage = 'Sign-in was cancelled. Please try again.';
       } else if (err.code === 'auth/popup-blocked') {
-        errorMessage = 'Popup was blocked by your browser. Please allow popups and try again.';
+        errorMessage = 'Popup was blocked. Please allow popups for this site and try again.';
+      } else if (err.code === 'auth/unauthorized-domain') {
+        errorMessage = 'This domain is not authorized for Apple Sign-In. Please contact support.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMessage = 'Apple Sign-In is not enabled. Please contact support.';
+      } else if (err.code === 'auth/account-exists-with-different-credential') {
+        errorMessage = 'An account already exists with this email. Please sign in with your original method.';
+      } else if (err.code === 'auth/invalid-credential') {
+        errorMessage = 'Invalid Apple Sign-In credential. Please try again.';
+      } else if (err.code === 'auth/network-request-failed') {
+        errorMessage = 'Network error. Please check your connection and try again.';
       } else if (err.message) {
         errorMessage = err.message;
       }
+      
+      console.error('Apple Sign-In Error:', err);
       setError(errorMessage);
     } finally {
       setLoading(false);

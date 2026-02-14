@@ -7,7 +7,7 @@ import {
   MessageSquare, HelpCircle, Building, Globe, Linkedin,
   Twitter, Facebook, Instagram, AlertCircle
 } from 'lucide-react';
-import { db } from '@/lib/firebase';
+import { getDb } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 const CONTACT_METHODS = [
@@ -78,7 +78,8 @@ export default function ContactPage() {
     setErrorMessage('');
 
     try {
-      // Save to Firestore
+      // Save to Firestore - submissions go to admin panel
+      const db = getDb();
       await addDoc(collection(db, 'contact_submissions'), {
         name: formData.name,
         email: formData.email,
