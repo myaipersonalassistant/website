@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import Lottie from 'lottie-react';
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -37,7 +37,8 @@ const checkOnboardingStatus = async (userId: string): Promise<boolean> => {
   }
 };
 
-export default function AuthPage() {
+// Main auth page content component (uses useSearchParams, needs Suspense)
+function AuthPageContent() {
   const navigate = useRouter();
   const searchParams = useSearchParams();
   const [currentView, setCurrentView] = useState<AuthView>('login');
@@ -1029,5 +1030,21 @@ export default function AuthPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Default export with Suspense boundary
+export default function AuthPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-600">Loading...</p>
+        </div>
+      </div>
+    }>
+      <AuthPageContent />
+    </Suspense>
   );
 }

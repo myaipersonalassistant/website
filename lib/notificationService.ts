@@ -72,18 +72,14 @@ class NotificationService {
       ? `Location: ${activity.location}`
       : '';
 
+    // Create notification
+    // The tag already contains the activity type and ID, so we don't need the data property
     const notification = new Notification(activity.title, {
       body: body || 'Time for your activity!',
       icon: '/favicon.ico',
       badge: '/favicon.ico',
-      tag: notificationId, // Prevents duplicate notifications
+      tag: notificationId, // Prevents duplicate notifications and contains activity info
       requireInteraction: activity.type === 'reminder', // Reminders stay until dismissed
-      timestamp: activity.scheduledTime.getTime(),
-      data: {
-        activityId: activity.id,
-        activityType: activity.type,
-        url: '/calendar'
-      }
     });
 
     // Handle click - navigate to calendar

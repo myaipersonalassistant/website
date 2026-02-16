@@ -143,8 +143,9 @@ class PushNotificationService {
 
   /**
    * Convert VAPID key from URL-safe base64 to Uint8Array
+   * Returns a BufferSource-compatible Uint8Array for use with PushManager
    */
-  private urlBase64ToUint8Array(base64String: string): Uint8Array {
+  private urlBase64ToUint8Array(base64String: string): BufferSource {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
     const base64 = (base64String + padding)
       .replace(/\-/g, '+')
