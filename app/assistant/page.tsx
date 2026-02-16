@@ -780,37 +780,174 @@ const AssistantPage: React.FC = () => {
           : '')
       }));
 
-      // Call Deepseek API via backend
-      const token = await getAuthToken();
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+      // Call Deepseek API directly
+      const deepseekApiKey = process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY;
+      if (!deepseekApiKey) {
+        throw new Error('Deepseek API key not configured');
+      }
+
+      // Build system context from user data and activities
+      const currentDate = new Date();
+      const currentDateString = currentDate.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+      const currentTimeString = currentDate.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit' 
+      });
       
-      // Prepare user data to send to API (only what's needed for personalization)
-      const userDataForAPI = userData ? {
-        onboardingData: userData.onboardingData || {},
-        settings: userData.settings || {},
-        fullName: userData.fullName || null
-      } : null;
+      let systemContext = 'You are MAI-PA, a helpful AI personal assistant.';
+      systemContext += ` Today is ${currentDateString}. The current time is ${currentTimeString}.`;
       
-      const response = await fetch(`${backendUrl}/api/chat`, {
+      if (userData) {
+        const userName = userData.fullName || userData.onboardingData?.userName || 'User';
+        const aiName = userData.onboardingData?.aiName || 'MAI';
+        systemContext += ` The user's name is ${userName}. The AI assistant is called ${aiName}.`;
+        
+        if (userData.onboardingData?.personality) {
+          systemContext += ` The assistant's personality: ${userData.onboardingData.personality}.`;
+        }
+      }
+
+      // Add activities context if available
+      // Include actual activity data so AI can reference specific events, tasks, and reminders
+      if (userActivities) {
+        const events = userActivities.events || [];
+        const reminders = userActivities.reminders || [];
+        const tasks = userActivities.tasks || [];
+        
+        // Filter to only upcoming/recent activities (last 30 days and future)
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        
+        const upcomingEvents = events
+          .filter(e => {
+            const eventDate = new Date(e.start_time);
+            return eventDate >= thirtyDaysAgo && e.status !== 'cancelled';
+          })
+          .slice(0, 20) // Limit to 20 most relevant events
+          .map(e => ({
+            title: e.title,
+            description: e.description || '',
+            start_time: e.start_time,
+            location: e.location || ''
+          }));
+        
+        const upcomingReminders = reminders
+          .filter(r => {
+            const remindDate = new Date(r.remind_at);
+            return remindDate >= thirtyDaysAgo && r.status !== 'cancelled';
+          })
+          .slice(0, 20) // Limit to 20 most relevant reminders
+          .map(r => ({
+            title: r.title,
+            description: r.description || '',
+            remind_at: r.remind_at
+          }));
+        
+        const upcomingTasks = tasks
+          .filter(t => {
+            if (!t.due_date) return false;
+            const taskDate = new Date(t.due_date);
+            return taskDate >= thirtyDaysAgo && t.status !== 'cancelled' && t.status !== 'completed';
+          })
+          .slice(0, 20) // Limit to 20 most relevant tasks
+          .map(t => ({
+            title: t.title,
+            description: t.description || '',
+            due_date: t.due_date,
+            priority: t.priority || 'normal'
+          }));
+        
+        if (upcomingEvents.length > 0 || upcomingReminders.length > 0 || upcomingTasks.length > 0) {
+          systemContext += '\n\nUser Activities:\n';
+          
+          if (upcomingEvents.length > 0) {
+            systemContext += `Events (${upcomingEvents.length}):\n`;
+            upcomingEvents.forEach((e, i) => {
+              const eventDate = e.start_time ? new Date(e.start_time) : null;
+              const dateStr = eventDate ? eventDate.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                month: 'short', 
+                day: 'numeric',
+                year: eventDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
+              }) : '';
+              const timeStr = eventDate ? eventDate.toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit' 
+              }) : '';
+              systemContext += `${i + 1}. ${e.title}${dateStr ? ` on ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : ''}${e.location ? ` at ${e.location}` : ''}${e.description ? ` - ${e.description.substring(0, 100)}` : ''}\n`;
+            });
+          }
+          
+          if (upcomingReminders.length > 0) {
+            systemContext += `\nReminders (${upcomingReminders.length}):\n`;
+            upcomingReminders.forEach((r, i) => {
+              const remindDate = r.remind_at ? new Date(r.remind_at) : null;
+              const dateStr = remindDate ? remindDate.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                month: 'short', 
+                day: 'numeric',
+                year: remindDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
+              }) : '';
+              const timeStr = remindDate ? remindDate.toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit' 
+              }) : '';
+              systemContext += `${i + 1}. ${r.title}${dateStr ? ` on ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : ''}${r.description ? ` - ${r.description.substring(0, 100)}` : ''}\n`;
+            });
+          }
+          
+          if (upcomingTasks.length > 0) {
+            systemContext += `\nTasks (${upcomingTasks.length}):\n`;
+            upcomingTasks.forEach((t, i) => {
+              const taskDate = t.due_date ? new Date(t.due_date) : null;
+              const dateStr = taskDate ? taskDate.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                month: 'short', 
+                day: 'numeric',
+                year: taskDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
+              }) : '';
+              systemContext += `${i + 1}. ${t.title}${dateStr ? ` (due ${dateStr})` : ''}${t.priority !== 'normal' ? ` [${t.priority} priority]` : ''}${t.description ? ` - ${t.description.substring(0, 100)}` : ''}\n`;
+            });
+          }
+        }
+      }
+
+      // Prepare messages for Deepseek API
+      const apiMessages = [
+        {
+          role: 'system',
+          content: systemContext
+        },
+        ...messagesForAPI
+      ];
+
+      // Call Deepseek API directly
+      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${deepseekApiKey}`
         },
         body: JSON.stringify({
-          messages: messagesForAPI,
-          conversationId,
-          userData: userDataForAPI, // Pass user data from client
-          activities: userActivities // Pass user activities (events, reminders, tasks)
-        }),
+          model: 'deepseek-chat',
+          messages: apiMessages,
+          temperature: 0.7,
+          max_tokens: 2000
+        })
       });
 
       if (!response.ok) {
-        throw new Error('Failed to get AI response');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || 'Failed to get AI response');
       }
 
       const data = await response.json();
-      const assistantMessage = data.message;
+      const assistantMessage = data.choices?.[0]?.message?.content || 'I apologize, but I could not generate a response.';
 
       // Add assistant message to Firestore first
       const assistantMessageRef = await addDoc(messagesRef, {
@@ -832,23 +969,39 @@ const AssistantPage: React.FC = () => {
       if ((voiceMode || selectedVoiceId) && assistantMessage) {
         try {
           setGeneratingAudio(assistantMessageRef.id);
-          const ttsToken = await getAuthToken();
-          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
-          const ttsResponse = await fetch(`${backendUrl}/api/tts`, {
+          
+          // Call ElevenLabs API directly
+          const elevenlabsApiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
+          if (!elevenlabsApiKey) {
+            throw new Error('ElevenLabs API key not configured');
+          }
+
+          const voiceId = selectedVoiceId || VOICE_OPTIONS[0].id;
+          const ttsResponse = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${ttsToken}`,
+              'xi-api-key': elevenlabsApiKey
             },
             body: JSON.stringify({
               text: assistantMessage,
-              voiceId: selectedVoiceId || VOICE_OPTIONS[0].id,
-            }),
+              model_id: 'eleven_multilingual_v2',
+              voice_settings: {
+                stability: 0.5,
+                similarity_boost: 0.75
+              }
+            })
           });
 
           if (ttsResponse.ok) {
-            const ttsData = await ttsResponse.json();
-            const audioUrl = ttsData.audio;
+            // Get audio as blob and convert to data URL
+            const audioBlob = await ttsResponse.blob();
+            const reader = new FileReader();
+            const audioUrl = await new Promise<string>((resolve, reject) => {
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(audioBlob);
+            });
             
             // Update message with audio URL
             await updateDoc(assistantMessageRef, {
