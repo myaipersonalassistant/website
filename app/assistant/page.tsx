@@ -802,11 +802,14 @@ const AssistantPage: React.FC = () => {
       
       let systemContext = 'You are MAI-PA, a helpful AI personal assistant.';
       systemContext += ` Today is ${currentDateString}. The current time is ${currentTimeString}.`;
-      systemContext += '\n\nIMPORTANT RULES:\n';
+      systemContext += '\n\nCRITICAL RULES - YOU MUST FOLLOW THESE:\n';
       systemContext += '1. NEVER use markdown formatting like **bold** or *italic* in your responses. Use plain text only.\n';
-      systemContext += '2. NEVER make up or invent calendar events, tasks, or reminders. Only use the actual activities provided in the User Activities section below.\n';
-      systemContext += '3. If the user asks about their calendar and there are no activities listed, tell them they have no events/reminders/tasks scheduled, do NOT invent any.\n';
-      systemContext += '4. Always be truthful and only reference real data that has been provided to you.\n';
+      systemContext += '2. NEVER make up, invent, or hallucinate calendar events, tasks, or reminders. This is STRICTLY FORBIDDEN.\n';
+      systemContext += '3. ONLY reference activities that are explicitly listed in the "User Activities" section below. If an activity is not listed there, it does NOT exist.\n';
+      systemContext += '4. If the user asks about their calendar/schedule and the "User Activities" section shows no events, you MUST say "You have no events scheduled" or "Your calendar is empty". DO NOT create fake events.\n';
+      systemContext += '5. If the activities list is empty or shows "Events (0):", "Reminders (0):", "Tasks (0):", you MUST tell the user they have nothing scheduled. DO NOT invent activities.\n';
+      systemContext += '6. If you are unsure whether an activity exists, check the User Activities section. If it is not there, it does not exist.\n';
+      systemContext += '7. Making up fake calendar events is a serious error. Always verify against the provided activities list.\n';
       
       if (userData) {
         const userName = userData.fullName || userData.onboardingData?.userName || 'User';
@@ -868,59 +871,67 @@ const AssistantPage: React.FC = () => {
             priority: t.priority || 'normal'
           }));
         
-        if (upcomingEvents.length > 0 || upcomingReminders.length > 0 || upcomingTasks.length > 0) {
-          systemContext += '\n\nUser Activities:\n';
-          
-          if (upcomingEvents.length > 0) {
-            systemContext += `Events (${upcomingEvents.length}):\n`;
-            upcomingEvents.forEach((e, i) => {
-              const eventDate = e.start_time ? new Date(e.start_time) : null;
-              const dateStr = eventDate ? eventDate.toLocaleDateString('en-US', { 
-                weekday: 'short', 
-                month: 'short', 
-                day: 'numeric',
-                year: eventDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
-              }) : '';
-              const timeStr = eventDate ? eventDate.toLocaleTimeString('en-US', { 
-                hour: 'numeric', 
-                minute: '2-digit' 
-              }) : '';
-              systemContext += `${i + 1}. ${e.title}${dateStr ? ` on ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : ''}${e.location ? ` at ${e.location}` : ''}${e.description ? ` - ${e.description.substring(0, 100)}` : ''}\n`;
-            });
-          }
-          
-          if (upcomingReminders.length > 0) {
-            systemContext += `\nReminders (${upcomingReminders.length}):\n`;
-            upcomingReminders.forEach((r, i) => {
-              const remindDate = r.remind_at ? new Date(r.remind_at) : null;
-              const dateStr = remindDate ? remindDate.toLocaleDateString('en-US', { 
-                weekday: 'short', 
-                month: 'short', 
-                day: 'numeric',
-                year: remindDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
-              }) : '';
-              const timeStr = remindDate ? remindDate.toLocaleTimeString('en-US', { 
-                hour: 'numeric', 
-                minute: '2-digit' 
-              }) : '';
-              systemContext += `${i + 1}. ${r.title}${dateStr ? ` on ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : ''}${r.description ? ` - ${r.description.substring(0, 100)}` : ''}\n`;
-            });
-          }
-          
-          if (upcomingTasks.length > 0) {
-            systemContext += `\nTasks (${upcomingTasks.length}):\n`;
-            upcomingTasks.forEach((t, i) => {
-              const taskDate = t.due_date ? new Date(t.due_date) : null;
-              const dateStr = taskDate ? taskDate.toLocaleDateString('en-US', { 
-                weekday: 'short', 
-                month: 'short', 
-                day: 'numeric',
-                year: taskDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
-              }) : '';
-              systemContext += `${i + 1}. ${t.title}${dateStr ? ` (due ${dateStr})` : ''}${t.priority !== 'normal' ? ` [${t.priority} priority]` : ''}${t.description ? ` - ${t.description.substring(0, 100)}` : ''}\n`;
-            });
-          }
+        // Always include the User Activities section, even if empty, so AI knows what exists
+        systemContext += '\n\n=== USER ACTIVITIES (ONLY USE THESE - DO NOT INVENT ANY OTHERS) ===\n';
+        
+        if (upcomingEvents.length > 0) {
+          systemContext += `\nEvents (${upcomingEvents.length}):\n`;
+          upcomingEvents.forEach((e, i) => {
+            const eventDate = e.start_time ? new Date(e.start_time) : null;
+            const dateStr = eventDate ? eventDate.toLocaleDateString('en-US', { 
+              weekday: 'short', 
+              month: 'short', 
+              day: 'numeric',
+              year: eventDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
+            }) : '';
+            const timeStr = eventDate ? eventDate.toLocaleTimeString('en-US', { 
+              hour: 'numeric', 
+              minute: '2-digit' 
+            }) : '';
+            systemContext += `${i + 1}. ${e.title}${dateStr ? ` on ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : ''}${e.location ? ` at ${e.location}` : ''}${e.description ? ` - ${e.description.substring(0, 100)}` : ''}\n`;
+          });
+        } else {
+          systemContext += '\nEvents (0): NONE - User has no events scheduled.\n';
         }
+        
+        if (upcomingReminders.length > 0) {
+          systemContext += `\nReminders (${upcomingReminders.length}):\n`;
+          upcomingReminders.forEach((r, i) => {
+            const remindDate = r.remind_at ? new Date(r.remind_at) : null;
+            const dateStr = remindDate ? remindDate.toLocaleDateString('en-US', { 
+              weekday: 'short', 
+              month: 'short', 
+              day: 'numeric',
+              year: remindDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
+            }) : '';
+            const timeStr = remindDate ? remindDate.toLocaleTimeString('en-US', { 
+              hour: 'numeric', 
+              minute: '2-digit' 
+            }) : '';
+            systemContext += `${i + 1}. ${r.title}${dateStr ? ` on ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : ''}${r.description ? ` - ${r.description.substring(0, 100)}` : ''}\n`;
+          });
+        } else {
+          systemContext += '\nReminders (0): NONE - User has no reminders scheduled.\n';
+        }
+        
+        if (upcomingTasks.length > 0) {
+          systemContext += `\nTasks (${upcomingTasks.length}):\n`;
+          upcomingTasks.forEach((t, i) => {
+            const taskDate = t.due_date ? new Date(t.due_date) : null;
+            const dateStr = taskDate ? taskDate.toLocaleDateString('en-US', { 
+              weekday: 'short', 
+              month: 'short', 
+              day: 'numeric',
+              year: taskDate.getFullYear() !== currentDate.getFullYear() ? 'numeric' : undefined
+            }) : '';
+            systemContext += `${i + 1}. ${t.title}${dateStr ? ` (due ${dateStr})` : ''}${t.priority !== 'normal' ? ` [${t.priority} priority]` : ''}${t.description ? ` - ${t.description.substring(0, 100)}` : ''}\n`;
+          });
+        } else {
+          systemContext += '\nTasks (0): NONE - User has no tasks scheduled.\n';
+        }
+        
+        systemContext += '\n=== END OF USER ACTIVITIES ===\n';
+        systemContext += 'CRITICAL: If the counts above show (0) or "NONE", the user has NO activities. Do NOT invent any. Only reference activities explicitly listed above.\n';
       }
 
       // Prepare messages for Deepseek API
