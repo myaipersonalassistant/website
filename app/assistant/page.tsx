@@ -783,7 +783,8 @@ const AssistantPage: React.FC = () => {
       // Call Deepseek API directly
       const deepseekApiKey = process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY;
       if (!deepseekApiKey) {
-        throw new Error('Deepseek API key not configured');
+        console.error('Deepseek API key is missing. Make sure NEXT_PUBLIC_DEEPSEEK_API_KEY is set in your environment variables.');
+        throw new Error('Deepseek API key not configured. Please set NEXT_PUBLIC_DEEPSEEK_API_KEY in your environment variables.');
       }
 
       // Build system context from user data and activities
@@ -801,11 +802,16 @@ const AssistantPage: React.FC = () => {
       
       let systemContext = 'You are MAI-PA, a helpful AI personal assistant.';
       systemContext += ` Today is ${currentDateString}. The current time is ${currentTimeString}.`;
+      systemContext += '\n\nIMPORTANT RULES:\n';
+      systemContext += '1. NEVER use markdown formatting like **bold** or *italic* in your responses. Use plain text only.\n';
+      systemContext += '2. NEVER make up or invent calendar events, tasks, or reminders. Only use the actual activities provided in the User Activities section below.\n';
+      systemContext += '3. If the user asks about their calendar and there are no activities listed, tell them they have no events/reminders/tasks scheduled, do NOT invent any.\n';
+      systemContext += '4. Always be truthful and only reference real data that has been provided to you.\n';
       
       if (userData) {
         const userName = userData.fullName || userData.onboardingData?.userName || 'User';
         const aiName = userData.onboardingData?.aiName || 'MAI';
-        systemContext += ` The user's name is ${userName}. The AI assistant is called ${aiName}.`;
+        systemContext += `\nThe user's name is ${userName}. The AI assistant is called ${aiName}.`;
         
         if (userData.onboardingData?.personality) {
           systemContext += ` The assistant's personality: ${userData.onboardingData.personality}.`;
@@ -926,6 +932,8 @@ const AssistantPage: React.FC = () => {
         ...messagesForAPI
       ];
 
+      console.log('Calling Deepseek API with', apiMessages.length, 'messages');
+
       // Call Deepseek API directly
       const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
@@ -941,13 +949,39 @@ const AssistantPage: React.FC = () => {
         })
       });
 
+      console.log('Deepseek API response status:', response.status, response.statusText);
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || 'Failed to get AI response');
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          errorData = { message: await response.text() || 'Unknown error' };
+        }
+        
+        const errorMessage = errorData.error?.message || errorData.message || `HTTP ${response.status}: ${response.statusText}`;
+        console.error('Deepseek API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData,
+          fullError: errorData
+        });
+        throw new Error(`Deepseek API error: ${errorMessage}`);
       }
 
       const data = await response.json();
-      const assistantMessage = data.choices?.[0]?.message?.content || 'I apologize, but I could not generate a response.';
+      let assistantMessage = data.choices?.[0]?.message?.content || 'I apologize, but I could not generate a response.';
+      
+      // Remove markdown formatting (**bold**, *italic*, etc.) for better UI display
+      assistantMessage = assistantMessage
+        .replace(/\*\*(.*?)\*\*/g, '$1') // Remove **bold**
+        .replace(/\*(.*?)\*/g, '$1') // Remove *italic*
+        .replace(/__(.*?)__/g, '$1') // Remove __bold__
+        .replace(/_(.*?)_/g, '$1') // Remove _italic_
+        .replace(/~~(.*?)~~/g, '$1') // Remove ~~strikethrough~~
+        .replace(/`(.*?)`/g, '$1') // Remove `code`
+        .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+        .trim();
 
       // Add assistant message to Firestore first
       const assistantMessageRef = await addDoc(messagesRef, {
@@ -1088,9 +1122,25 @@ const AssistantPage: React.FC = () => {
       
       setConversations(conversationsData);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error sending message:', error);
-      alert('Failed to send message. Please try again.');
+      
+      // Show more specific error message
+      let errorMessage = 'Failed to send message. Please try again.';
+      
+      if (error.message) {
+        if (error.message.includes('API key not configured')) {
+          errorMessage = 'API key not configured. Please set NEXT_PUBLIC_DEEPSEEK_API_KEY in your environment variables.';
+        } else if (error.message.includes('Failed to get AI response')) {
+          errorMessage = 'Failed to get AI response. Please check your API key and try again.';
+        } else if (error.message.includes('NetworkError') || error.message.includes('fetch')) {
+          errorMessage = 'Network error. Please check your internet connection and try again.';
+        } else {
+          errorMessage = `Error: ${error.message}`;
+        }
+      }
+      
+      alert(errorMessage);
     } finally {
       setIsTyping(false);
     }
