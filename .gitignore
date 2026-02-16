@@ -37,6 +37,9 @@ back-end-sample.txt
 
 # vercel
 .vercel
+vercel.json
+server.js
+APPLE_AUTH_SETUP.md
 
 # typescript
 *.tsbuildinfo

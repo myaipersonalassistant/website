@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Lottie from 'lottie-react';
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Mail, Lock, Eye, EyeOff, ArrowRight, CheckCircle, AlertCircle, User, Calendar, Sparkles, Shield, RefreshCw } from 'lucide-react';
 import { auth, db, getDb } from '@/lib/firebase';
 import { 
@@ -39,6 +39,7 @@ const checkOnboardingStatus = async (userId: string): Promise<boolean> => {
 
 export default function AuthPage() {
   const navigate = useRouter();
+  const searchParams = useSearchParams();
   const [currentView, setCurrentView] = useState<AuthView>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -79,15 +80,15 @@ export default function AuthPage() {
   }, []);
 
   useEffect(() => {
-    // Check URL parameters for view
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const view = params.get('view') as AuthView;
-      if (view && ['login', 'signup', 'forgot-password', 'reset-password'].includes(view)) {
-        setCurrentView(view);
-      }
+    // Check URL parameters for view on mount and when URL changes
+    const view = searchParams.get('view') as AuthView;
+    if (view && ['login', 'signup', 'forgot-password', 'reset-password'].includes(view)) {
+      setCurrentView(view);
+    } else {
+      // Default to login if no view parameter
+      setCurrentView('login');
     }
-  }, []);
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

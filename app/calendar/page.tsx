@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Calendar as CalendarIcon,
   Plus,
@@ -42,6 +42,8 @@ import {
   Timestamp,
   orderBy 
 } from 'firebase/firestore';
+import { notificationService } from '@/lib/notificationService';
+import { pushNotificationService } from '@/lib/pushNotificationService';
 
 interface CalendarEvent {
   id: string;
@@ -110,6 +112,22 @@ export default function CalendarPage() {
   const [indexWarnings, setIndexWarnings] = useState<Array<{ collection: string; indexUrl: string }>>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+  
+  // Refs to store latest activities for notification monitoring (avoids closure issues)
+  const activitiesRef = useRef<{
+    events: CalendarEvent[];
+    reminders: Reminder[];
+    tasks: Task[];
+  }>({ events: [], reminders: [], tasks: [] });
+  
+  // Update refs when activities change
+  useEffect(() => {
+    activitiesRef.current = {
+      events: allEvents,
+      reminders: allReminders,
+      tasks: allTasks
+    };
+  }, [allEvents, allReminders, allTasks]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -121,6 +139,120 @@ export default function CalendarPage() {
       fetchAllActivities();
     }
   }, [user, authLoading]);
+
+  // Separate effect for notification monitoring (uses in-memory data, no Firestore reads)
+  // This effect only runs once when user is available, then uses closure to access latest state
+  useEffect(() => {
+    if (!user) return;
+    
+    // Request notification permission and initialize push notifications
+    if (typeof window !== 'undefined') {
+      // Request browser notification permission
+      if ('Notification' in window && Notification.permission === 'default') {
+        notificationService.requestPermission().catch(console.error);
+      }
+      
+      // Initialize and subscribe to push notifications (works even when website is closed)
+      pushNotificationService.initialize().then(async (initialized) => {
+        if (initialized && user) {
+          try {
+            const subscription = await pushNotificationService.subscribe();
+            if (subscription) {
+              // Save subscription to backend
+              const token = await user.getIdToken();
+              const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+              await fetch(`${backendUrl}/api/push/subscribe`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ subscription })
+              }).catch(error => {
+                console.error('Error saving push subscription:', error);
+              });
+            }
+          } catch (error) {
+            console.error('Error subscribing to push notifications:', error);
+          }
+        }
+      }).catch(console.error);
+      
+      // Use in-memory data from refs (already loaded, no Firestore read)
+      // Refs ensure we always get the latest data without restarting the interval
+      const getActivitiesFromMemory = async () => {
+        const now = new Date();
+        const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        
+        const activities: Array<{
+          id: string;
+          type: 'event' | 'reminder' | 'task';
+          title: string;
+          description?: string;
+          scheduledTime: Date;
+          location?: string;
+          priority?: string;
+        }> = [];
+        
+        // Use activities from refs (latest data, no Firestore read)
+        const { events, reminders, tasks } = activitiesRef.current;
+        
+        events.forEach(event => {
+          if (event.status === 'cancelled') return;
+          const eventTime = new Date(event.start_time);
+          if (eventTime >= now && eventTime <= tomorrow) {
+            activities.push({
+              id: event.id,
+              type: 'event',
+              title: event.title,
+              description: event.description,
+              scheduledTime: eventTime,
+              location: event.location
+            });
+          }
+        });
+        
+        reminders.forEach(reminder => {
+          if (reminder.status === 'cancelled') return;
+          const remindTime = new Date(reminder.remind_at);
+          if (remindTime >= now && remindTime <= tomorrow) {
+            activities.push({
+              id: reminder.id,
+              type: 'reminder',
+              title: reminder.title,
+              description: reminder.description,
+              scheduledTime: remindTime
+            });
+          }
+        });
+        
+        tasks.forEach(task => {
+          if (task.status === 'cancelled' || !task.due_date) return;
+          const dueTime = new Date(task.due_date);
+          if (dueTime >= now && dueTime <= tomorrow) {
+            activities.push({
+              id: task.id,
+              type: 'task',
+              title: task.title,
+              description: task.description,
+              scheduledTime: dueTime,
+              priority: task.priority
+            });
+          }
+        });
+        
+        return activities;
+      };
+      
+      // Start monitoring with in-memory data (no Firestore reads)
+      notificationService.startMonitoring(getActivitiesFromMemory);
+      
+      // Cleanup on unmount
+      return () => {
+        notificationService.stopMonitoring();
+      };
+    }
+  }, [user]); // Only run once when user is available - closure captures latest state
 
   // Fetch data when selected date changes (only filter, don't re-fetch all)
   useEffect(() => {

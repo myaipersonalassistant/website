@@ -780,8 +780,9 @@ const AssistantPage: React.FC = () => {
           : '')
       }));
 
-      // Call Deepseek API
+      // Call Deepseek API via backend
       const token = await getAuthToken();
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
       
       // Prepare user data to send to API (only what's needed for personalization)
       const userDataForAPI = userData ? {
@@ -790,7 +791,7 @@ const AssistantPage: React.FC = () => {
         fullName: userData.fullName || null
       } : null;
       
-      const response = await fetch('/api/chat', {
+      const response = await fetch(`${backendUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -831,10 +832,13 @@ const AssistantPage: React.FC = () => {
       if ((voiceMode || selectedVoiceId) && assistantMessage) {
         try {
           setGeneratingAudio(assistantMessageRef.id);
-          const ttsResponse = await fetch('/api/tts', {
+          const ttsToken = await getAuthToken();
+          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+          const ttsResponse = await fetch(`${backendUrl}/api/tts`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              'Authorization': `Bearer ${ttsToken}`,
             },
             body: JSON.stringify({
               text: assistantMessage,

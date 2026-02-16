@@ -32,7 +32,9 @@ import {
 import { useAuth } from '@/lib/useAuth';
 import DashboardSidebar from '@/app/components/DashboardSidebar';
 import { getDb } from '@/lib/firebase';
-import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, Timestamp, doc, setDoc } from 'firebase/firestore';
+import { notificationService } from '@/lib/notificationService';
+import { pushNotificationService } from '@/lib/pushNotificationService';
 
 type ActivityType = 'event' | 'reminder' | 'task' | 'todo';
 
@@ -131,6 +133,14 @@ function NewActivityPageContent() {
     if (user) {
       setUserName(user.displayName || user.email?.split('@')[0] || 'User');
       
+      // Request notification permission when user visits the page
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        if (Notification.permission === 'default') {
+          // Request permission silently - will request again when creating activity
+          notificationService.requestPermission().catch(console.error);
+        }
+      }
+      
       // Check if type is specified in URL
       const typeParam = searchParams.get('type');
       if (typeParam && ['event', 'reminder', 'task', 'todo'].includes(typeParam)) {
@@ -180,6 +190,37 @@ function NewActivityPageContent() {
       setIsSubmitting(true);
       setError('');
       const db = getDb();
+
+      // Request notification permission and subscribe to push notifications
+      if (typeof window !== 'undefined') {
+        // Request browser notification permission
+        if ('Notification' in window && Notification.permission === 'default') {
+          await notificationService.requestPermission();
+        }
+        
+        // Subscribe to push notifications (works even when website is closed)
+        try {
+          const subscription = await pushNotificationService.subscribe();
+          if (subscription) {
+            // Save subscription to Firestore for server-side push notifications
+            const db = getDb();
+            await setDoc(
+              doc(db, 'users', user.uid, 'push_subscriptions', subscription.endpoint.split('/').pop() || 'default'),
+              {
+                endpoint: subscription.endpoint,
+                keys: subscription.keys,
+                userId: user.uid,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+              },
+              { merge: true }
+            );
+          }
+        } catch (error) {
+          console.error('Error subscribing to push notifications:', error);
+          // Don't fail activity creation if push subscription fails
+        }
+      }
 
       switch (formData.type) {
         case 'event':

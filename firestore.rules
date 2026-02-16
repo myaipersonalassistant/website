@@ -52,6 +52,15 @@ service cloud.firestore {
         allow list: if isAdmin();
       }
       
+      // Push subscriptions subcollection (for Web Push notifications)
+      match /push_subscriptions/{subscriptionId} {
+        // Users can read/write their own push subscriptions
+        allow read, write: if isOwner(userId);
+        
+        // Admins can read all push subscriptions
+        allow read: if isAdmin();
+      }
+      
       // Payment methods subcollection
       match /payment_methods/{paymentMethodId} {
         // Users can read/write their own payment methods
